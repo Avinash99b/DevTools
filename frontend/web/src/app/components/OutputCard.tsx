@@ -74,10 +74,20 @@ export function OutputCard({ output }: TerminalOutputProps) {
               style={{
                 margin: 0,
                 padding: "var(--dt-space-4)",
-                overflowX: "auto",
+                width: "100%",          
+                overflowX: "auto",        
+                overflowY: "hidden", 
+                boxSizing: "border-box",
               }}
             >
-              <code ref={codeRef} className="language-js">
+              <code
+                ref={codeRef}
+                className="language-js"
+                style={{
+                  display: "inline-block",
+                  minWidth: "100%",       // ensures it fills container but can expand
+                }}
+              >
                 {code}
               </code>
             </pre>

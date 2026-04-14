@@ -1,10 +1,10 @@
 import { useState } from "react";
-import { registerDevTool } from "../core/DevToolManager";
-import { ExecutionPanel } from "../components/ExecutionPanel";
+import { registerDevTool } from "../../core/DevToolManager";
+import { ExecutionPanel } from "../../components/ExecutionPanel";
 import { Link } from "react-router";
 import { ArrowLeft } from "lucide-react";
-import type { LogEntry } from "../components/TerminalOutput";
-import type { DevToolOutput } from "../types/DevToolOutput";
+import type { LogEntry } from "../../components/TerminalOutput";
+import type { DevToolOutput } from "../../types/DevToolOutput";
 
 
 function JsonTool() {

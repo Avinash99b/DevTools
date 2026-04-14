@@ -15,15 +15,15 @@ interface FormField {
 }
 
 interface ExecutionPanelProps {
-  isExecuting:boolean;
-  logs:LogEntry[]
+  isExecuting: boolean;
+  logs: LogEntry[]
   toolName: string;
   fields: FormField[];
   onExecute: (data: Record<string, any>) => void;
   output?: DevToolOutput
 }
 
-export function ExecutionPanel({isExecuting,logs, fields, onExecute,output }: ExecutionPanelProps) {
+export function ExecutionPanel({ isExecuting, logs, fields, onExecute, output }: ExecutionPanelProps) {
   const [formData, setFormData] = useState<Record<string, any>>({});
   const [executionMode, setExecutionMode] = useState<"local" | "remote">("local");
 
@@ -60,7 +60,7 @@ export function ExecutionPanel({isExecuting,logs, fields, onExecute,output }: Ex
           }}>
             Configuration
           </h2>
-          
+
           {/* Execution Mode Toggle */}
           <div style={{
             display: "flex",
@@ -105,7 +105,7 @@ export function ExecutionPanel({isExecuting,logs, fields, onExecute,output }: Ex
           </div>
         </div>
 
-        <form onSubmit={(e)=>{e.preventDefault();onExecute(formData)}} style={{ display: "flex", flexDirection: "column", gap: "var(--dt-space-5)" }}>
+        <form onSubmit={(e) => { e.preventDefault(); onExecute(formData) }} style={{ display: "flex", flexDirection: "column", gap: "var(--dt-space-5)" }}>
           {fields.map((field) => (
             <div key={field.name}>
               <label style={{
@@ -120,7 +120,7 @@ export function ExecutionPanel({isExecuting,logs, fields, onExecute,output }: Ex
                   <span style={{ color: "var(--dt-accent-error)", marginLeft: "4px" }}>*</span>
                 )}
               </label>
-              
+
               {field.description && (
                 <p style={{
                   fontSize: "var(--dt-text-xs)",
@@ -188,7 +188,7 @@ export function ExecutionPanel({isExecuting,logs, fields, onExecute,output }: Ex
                     style={{ display: "none" }}
                     id={field.name}
                   />
-                  <label 
+                  <label
                     htmlFor={field.name}
                     style={{
                       cursor: "pointer",
@@ -260,15 +260,16 @@ export function ExecutionPanel({isExecuting,logs, fields, onExecute,output }: Ex
       <div style={{
         display: "flex",
         flexDirection: "column",
-        gap: "var(--dt-space-4)"
+        gap: "var(--dt-space-4)",
+        overflow: "hidden"
       }}>
-        <TerminalOutput 
+        <TerminalOutput
           logs={logs}
           title="Logs"
           height="calc(100% - 40px)"
         />
-        {output?
-        <OutputCard output={output}/>:<></>}
+        {output ?
+          <OutputCard output={output} /> : <></>}
       </div>
 
       {

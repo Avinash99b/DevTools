@@ -51,7 +51,7 @@ class CategoryManager {
         return this.avilableCategories.find((val)=>val.id===categoryId)
     }
     registerCategory(category: ToolCategory): void {
-        this.avilableCategories.concat(category);
+        this.avilableCategories.push(category);
     }
 }
 
