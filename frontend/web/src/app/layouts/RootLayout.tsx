@@ -26,7 +26,7 @@ export function RootLayout() {
 
   const navigation = [
     { name: "Home", path: "/", icon: Home },
-    { name: "Marketplace", path: "/marketplace", icon: Package },
+    { name: "All Tools", path: "/available-tools", icon: Package },
     { name: "Tasks", path: "/tasks", icon: Activity },
     { name: "Server", path: "/server", icon: Server },
     { name: "Settings", path: "/settings", icon: SettingsIcon },

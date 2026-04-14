@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { Terminal, Copy, Download, Trash2, Maximize2 } from "lucide-react";
 
-interface LogEntry {
+export interface LogEntry {
   timestamp: string;
   level: "info" | "success" | "warning" | "error";
   message: string;
@@ -29,7 +29,7 @@ const levelPrefixes = {
 
 export function TerminalOutput({ 
   logs = [], 
-  title = "Output",
+  title = "Logs",
   height = "400px"
 }: TerminalOutputProps) {
   const [autoScroll, setAutoScroll] = useState(true);

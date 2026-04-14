@@ -1,8 +1,9 @@
 import { useParams, Link } from "react-router";
 import { ArrowLeft, Info } from "lucide-react";
 import { ExecutionPanel } from "../components/ExecutionPanel";
+import { registerDevTool } from "../core/DevToolManager";
 
-export function ToolExecution() {
+export function ImageTool() {
   const { toolId } = useParams();
 
   // Mock tool data - in real app, fetch based on toolId
@@ -156,7 +157,7 @@ export function ToolExecution() {
         }}>
           {tool.category}
         </div>
-        
+
         <h1 style={{
           fontSize: "var(--dt-text-3xl)",
           fontWeight: "var(--dt-font-bold)",
@@ -165,7 +166,7 @@ export function ToolExecution() {
         }}>
           {tool.name}
         </h1>
-        
+
         <p style={{
           fontSize: "var(--dt-text-base)",
           color: "var(--dt-text-secondary)",
@@ -193,10 +194,21 @@ export function ToolExecution() {
       </div>
 
       {/* Execution Panel */}
-      <ExecutionPanel 
+      <ExecutionPanel
+        isExecuting={false}
+        logs={[]}
         toolName={tool.name}
         fields={tool.fields}
+        onExecute={() => { }}
       />
     </div>
   );
 }
+registerDevTool({
+  author: "Avinash",
+  categoryId: 'image-tools',
+  description: 'Image Tools',
+  name: "Image Tool",
+  id: 'image-tool',
+  tool: ImageTool
+})

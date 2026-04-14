@@ -1,6 +1,8 @@
 import { useState } from "react";
 import { Play, Loader2, AlertCircle, CheckCircle2, Settings } from "lucide-react";
-import { TerminalOutput } from "./TerminalOutput";
+import { TerminalOutput, type LogEntry } from "./TerminalOutput";
+import type { DevToolOutput } from "../types/DevToolOutput";
+import { OutputCard } from "./OutputCard";
 
 interface FormField {
   name: string;
@@ -13,35 +15,17 @@ interface FormField {
 }
 
 interface ExecutionPanelProps {
+  isExecuting:boolean;
+  logs:LogEntry[]
   toolName: string;
   fields: FormField[];
-  onExecute?: (data: Record<string, any>) => void;
+  onExecute: (data: Record<string, any>) => void;
+  output?: DevToolOutput
 }
 
-export function ExecutionPanel({ toolName, fields, onExecute }: ExecutionPanelProps) {
+export function ExecutionPanel({isExecuting,logs, fields, onExecute,output }: ExecutionPanelProps) {
   const [formData, setFormData] = useState<Record<string, any>>({});
-  const [isExecuting, setIsExecuting] = useState(false);
   const [executionMode, setExecutionMode] = useState<"local" | "remote">("local");
-  const [logs, setLogs] = useState<any[]>([]);
-
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    setIsExecuting(true);
-    
-    // Simulate execution
-    const timestamp = new Date().toLocaleTimeString();
-    setLogs([
-      { timestamp, level: "info", message: `Starting ${toolName}...` },
-      { timestamp, level: "info", message: `Execution mode: ${executionMode}` },
-      { timestamp, level: "info", message: "Processing input files..." },
-      { timestamp, level: "success", message: "Operation completed successfully!" }
-    ]);
-
-    setTimeout(() => {
-      setIsExecuting(false);
-      onExecute?.(formData);
-    }, 2000);
-  };
 
   const handleFieldChange = (name: string, value: any) => {
     setFormData(prev => ({ ...prev, [name]: value }));
@@ -121,7 +105,7 @@ export function ExecutionPanel({ toolName, fields, onExecute }: ExecutionPanelPr
           </div>
         </div>
 
-        <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: "var(--dt-space-5)" }}>
+        <form onSubmit={(e)=>{e.preventDefault();onExecute(formData)}} style={{ display: "flex", flexDirection: "column", gap: "var(--dt-space-5)" }}>
           {fields.map((field) => (
             <div key={field.name}>
               <label style={{
@@ -272,7 +256,7 @@ export function ExecutionPanel({ toolName, fields, onExecute }: ExecutionPanelPr
         </form>
       </div>
 
-      {/* Right Panel - Output */}
+      {/* Right Panel - Logs */}
       <div style={{
         display: "flex",
         flexDirection: "column",
@@ -280,10 +264,16 @@ export function ExecutionPanel({ toolName, fields, onExecute }: ExecutionPanelPr
       }}>
         <TerminalOutput 
           logs={logs}
-          title="Execution Output"
+          title="Logs"
           height="calc(100% - 40px)"
         />
+        {output?
+        <OutputCard output={output}/>:<></>}
       </div>
+
+      {
+
+      }
 
       <style>{`
         @keyframes spin {

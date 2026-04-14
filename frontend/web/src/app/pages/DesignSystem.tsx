@@ -1,5 +1,5 @@
 import { Play, Download, Settings, Trash2, CheckCircle2, XCircle, AlertCircle, Info } from "lucide-react";
-import { PluginCard } from "../components/PluginCard";
+import { ToolCard } from "../components/ToolCard";
 import { StatusBadge } from "../components/StatusBadge";
 import { TerminalOutput } from "../components/TerminalOutput";
 
@@ -444,17 +444,12 @@ export function DesignSystem() {
             Plugin Card
           </h3>
           <div style={{ maxWidth: "400px" }}>
-            <PluginCard
+            <ToolCard
               id="sample"
               name="Sample Plugin"
               description="This is a sample plugin demonstrating the card component design"
-              category="utility"
-              version="1.0.0"
+              categoryId="apk-aab-tools"
               author="DevTools Team"
-              downloads={12500}
-              rating={4.7}
-              installed={true}
-              enabled={true}
             />
           </div>
         </div>
