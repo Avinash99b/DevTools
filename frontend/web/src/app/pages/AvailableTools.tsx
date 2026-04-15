@@ -17,13 +17,10 @@ export function AvailableTools() {
   ];
 
   const [availableTools,setAvailableTools] = useState<DevTool[]>([]);
-  useEffect(()=>{
-    DevToolManager.setOnToolsUpdateCallback(()=>{
-      setAvailableTools(DevToolManager.getToolsByCategoryId(selectedCategory))
-    })
-  })
+
   useEffect(()=>{
     setAvailableTools(DevToolManager.getToolsByCategoryId(selectedCategory))
+    console.log("Tools Updated",availableTools)
   },[selectedCategory])
 
   return (

@@ -8,7 +8,7 @@ import type { DevToolOutput } from "../../types/DevToolOutput";
 import { ToolCategories } from "../../core/CategoryManager";
 
 
-function JsonTool() {
+function JSObjectToJSONConverter() {
     const [isExecuting, setIsExecuting] = useState(false);
     const [logs, setLogs] = useState<LogEntry[]>([]);
 
@@ -28,7 +28,7 @@ function JsonTool() {
         try {
 
             const json = jsObjectToJsonString(str)
-            setOutput({data:json,type:"code"})
+            setOutput({ data: json, type: "code" })
 
             setLogs((val) => [...val, { level: "success", message: "Conversion Completed", timestamp: new Date().toLocaleTimeString() }])
         } catch (e) {
@@ -93,7 +93,7 @@ function JsonTool() {
                     color: "var(--dt-text-primary)",
                     margin: "0 0 var(--dt-space-2) 0"
                 }}>
-                    JSON Tool
+                    JSON Converter
                 </h1>
 
                 <p style={{
@@ -101,20 +101,22 @@ function JsonTool() {
                     color: "var(--dt-text-secondary)",
                     margin: 0
                 }}>
-                    This is an all in JSON tool for handling json data.
+                    Convert JavaScript Objects into formatted JSON. This tool takes a JavaScript object as input and transforms it into a JSON string, making it easier to read and use in various applications.
                 </p>
 
             </div>
 
             {/* Execution Panel */}
             <ExecutionPanel
+                isRemoteAvailable={false}
                 isExecuting={isExecuting}
                 toolName={'json-tool'}
                 fields={[{
                     name: "text",
                     type: "textarea",
                     required: true,
-                    label: "Text"
+                    label: "Text",
+                    placeholder: "Enter JavaScript Object here..., e.g. { name: 'John', age: 30, city: 'New York' }"
                 }]}
                 logs={logs}
                 onExecute={execute}
@@ -131,7 +133,7 @@ registerDevTool({
     description: "Contains all Utilities for json",
     id: "json-tool",
     name: "JSON Utilities",
-    tool: JsonTool
+    tool: JSObjectToJSONConverter
 })
 
 console.log("JSon tool imported")

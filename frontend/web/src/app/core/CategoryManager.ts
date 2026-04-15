@@ -65,5 +65,3 @@ class CategoryManager {
 }
 
 export default new CategoryManager();
-
-import.meta.glob("../tools/**/*.tsx", { eager: true })

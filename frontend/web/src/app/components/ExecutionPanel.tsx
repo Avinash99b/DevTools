@@ -15,6 +15,7 @@ interface FormField {
 }
 
 interface ExecutionPanelProps {
+  isRemoteAvailable: boolean;
   isExecuting: boolean;
   logs: LogEntry[]
   toolName: string;
@@ -23,7 +24,7 @@ interface ExecutionPanelProps {
   output?: DevToolOutput
 }
 
-export function ExecutionPanel({ isExecuting, logs, fields, onExecute, output }: ExecutionPanelProps) {
+export function ExecutionPanel({ isRemoteAvailable, isExecuting, logs, fields, onExecute, output }: ExecutionPanelProps) {
   const [formData, setFormData] = useState<Record<string, any>>({});
   const [executionMode, setExecutionMode] = useState<"local" | "remote">("local");
 
@@ -61,48 +62,48 @@ export function ExecutionPanel({ isExecuting, logs, fields, onExecute, output }:
             Configuration
           </h2>
 
-          {/* Execution Mode Toggle */}
-          <div style={{
-            display: "flex",
-            gap: "var(--dt-space-2)",
-            backgroundColor: "var(--dt-bg-tertiary)",
-            padding: "var(--dt-space-1)",
-            borderRadius: "var(--dt-radius-md)",
-            border: "1px solid var(--dt-border-primary)"
-          }}>
-            <button
-              onClick={() => setExecutionMode("local")}
-              style={{
-                padding: "var(--dt-space-2) var(--dt-space-3)",
-                backgroundColor: executionMode === "local" ? "var(--dt-accent-primary)" : "transparent",
-                color: executionMode === "local" ? "white" : "var(--dt-text-secondary)",
-                border: "none",
-                borderRadius: "var(--dt-radius-sm)",
-                fontSize: "var(--dt-text-xs)",
-                fontWeight: "var(--dt-font-medium)",
-                cursor: "pointer",
-                transition: "all var(--dt-transition-fast)"
-              }}
-            >
-              Local
-            </button>
-            <button
-              onClick={() => setExecutionMode("remote")}
-              style={{
-                padding: "var(--dt-space-2) var(--dt-space-3)",
-                backgroundColor: executionMode === "remote" ? "var(--dt-accent-primary)" : "transparent",
-                color: executionMode === "remote" ? "white" : "var(--dt-text-secondary)",
-                border: "none",
-                borderRadius: "var(--dt-radius-sm)",
-                fontSize: "var(--dt-text-xs)",
-                fontWeight: "var(--dt-font-medium)",
-                cursor: "pointer",
-                transition: "all var(--dt-transition-fast)"
-              }}
-            >
-              Remote
-            </button>
-          </div>
+          {isRemoteAvailable &&
+            <div style={{
+              display: "flex",
+              gap: "var(--dt-space-2)",
+              backgroundColor: "var(--dt-bg-tertiary)",
+              padding: "var(--dt-space-1)",
+              borderRadius: "var(--dt-radius-md)",
+              border: "1px solid var(--dt-border-primary)"
+            }}>
+              <button
+                onClick={() => setExecutionMode("local")}
+                style={{
+                  padding: "var(--dt-space-2) var(--dt-space-3)",
+                  backgroundColor: executionMode === "local" ? "var(--dt-accent-primary)" : "transparent",
+                  color: executionMode === "local" ? "white" : "var(--dt-text-secondary)",
+                  border: "none",
+                  borderRadius: "var(--dt-radius-sm)",
+                  fontSize: "var(--dt-text-xs)",
+                  fontWeight: "var(--dt-font-medium)",
+                  cursor: "pointer",
+                  transition: "all var(--dt-transition-fast)"
+                }}
+              >
+                Local
+              </button>
+              <button
+                onClick={() => setExecutionMode("remote")}
+                style={{
+                  padding: "var(--dt-space-2) var(--dt-space-3)",
+                  backgroundColor: executionMode === "remote" ? "var(--dt-accent-primary)" : "transparent",
+                  color: executionMode === "remote" ? "white" : "var(--dt-text-secondary)",
+                  border: "none",
+                  borderRadius: "var(--dt-radius-sm)",
+                  fontSize: "var(--dt-text-xs)",
+                  fontWeight: "var(--dt-font-medium)",
+                  cursor: "pointer",
+                  transition: "all var(--dt-transition-fast)"
+                }}
+              >
+                Remote
+              </button>
+            </div>}
         </div>
 
         <form onSubmit={(e) => { e.preventDefault(); onExecute(formData) }} style={{ display: "flex", flexDirection: "column", gap: "var(--dt-space-5)" }}>

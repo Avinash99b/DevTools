@@ -3,10 +3,6 @@ import type { DevTool } from "../types/DevTool";
 class DevToolManager {
     tools: DevTool[] = []
 
-    private onToolsUpdateCallback: ()=> void = ()=>{}
-    setOnToolsUpdateCallback(onToolsUpdate:()=>void){
-        this.onToolsUpdateCallback=onToolsUpdate
-    }
     getToolCountByCategoryId(categoryId: string) {
         return this.tools.filter((it) => it.categoryId === categoryId).length
     }
@@ -17,7 +13,6 @@ class DevToolManager {
     }
     registerTool(devTool:DevTool){
         this.tools.push(devTool)
-        this.onToolsUpdateCallback()
     }
     getToolById(id:string){
         return this.tools.find((it)=>it.id===id);

@@ -195,6 +195,7 @@ export function ImageTool() {
 
       {/* Execution Panel */}
       <ExecutionPanel
+        isRemoteAvailable={true}
         isExecuting={false}
         logs={[]}
         toolName={tool.name}
