@@ -5,38 +5,43 @@ import { Link } from "react-router";
 import { ArrowLeft } from "lucide-react";
 import type { LogEntry } from "../../components/TerminalOutput";
 import type { DevToolOutput } from "../../types/DevToolOutput";
-import { ToolCategories } from "../../core/CategoryManager";
+import CategoryManager, { ToolCategories } from "../../core/CategoryManager";
 
 
-function JSObjectToJSONConverter() {
+function Base64EnDecoder() {
     const [isExecuting, setIsExecuting] = useState(false);
     const [logs, setLogs] = useState<LogEntry[]>([]);
 
-    function jsObjectToJsonString(jsText: string) {
-        const obj = eval(`(${jsText})`);
-        return JSON.stringify(obj);
-    }
-
     const [output, setOutput] = useState<DevToolOutput | undefined>();
+
+        function encodeToBase64(str: string) {
+            return btoa(str);
+        }
+
+        function decodeFromBase64(str: string) {
+            return atob(str);
+        }
+
     function execute(data: Record<string, any>) {
         setIsExecuting(true)
 
-        setLogs((val) => [...val, { level: "info", message: "Starting Conversion", timestamp: new Date().toLocaleTimeString() }])
-
         const str = data["text"]
+        const action = data["action"]
 
         try {
+            let result = ""
+            if (action === "encode") {
+                result = encodeToBase64(str)
+            } else {
+                result = decodeFromBase64(str)
+            }
+            setOutput({ data: result, type: "code" })
 
-            const json = jsObjectToJsonString(str)
-            setOutput({ data: json, type: "code" })
-
-            setLogs((val) => [...val, { level: "success", message: "Conversion Completed", timestamp: new Date().toLocaleTimeString() }])
         } catch (e) {
-            setLogs((val) => [...val, { level: "error", message: "Conversion Failed", timestamp: new Date().toLocaleTimeString() }])
+            setLogs((val) => [...val, { level: "error", message: "Execution Failed", timestamp: new Date().toLocaleTimeString() }])
         }
         setIsExecuting(false)
     }
-
 
     return (
         <div style={{ padding: "var(--dt-space-8)" }}>
@@ -84,7 +89,7 @@ function JSObjectToJSONConverter() {
                     color: "var(--dt-accent-primary)",
                     marginBottom: "var(--dt-space-3)"
                 }}>
-                    Utilities
+                    {CategoryManager.getCategoryById(ToolCategories.ENDECODERS)?.name}
                 </div>
 
                 <h1 style={{
@@ -93,7 +98,7 @@ function JSObjectToJSONConverter() {
                     color: "var(--dt-text-primary)",
                     margin: "0 0 var(--dt-space-2) 0"
                 }}>
-                    JSON Converter
+                    Base64 Encoder/Decoder
                 </h1>
 
                 <p style={{
@@ -101,7 +106,7 @@ function JSObjectToJSONConverter() {
                     color: "var(--dt-text-secondary)",
                     margin: 0
                 }}>
-                    Convert JavaScript Objects into formatted JSON. This tool takes a JavaScript object as input and transforms it into a JSON string, making it easier to read and use in various applications.
+                    Encode or decode Base64 strings with ease. Perfect for developers, testers, and anyone working with encoded data.
                 </p>
 
             </div>
@@ -110,14 +115,30 @@ function JSObjectToJSONConverter() {
             <ExecutionPanel
                 isRemoteAvailable={false}
                 isExecuting={isExecuting}
-                toolName={'json-tool'}
-                fields={[{
-                    name: "text",
-                    type: "textarea",
-                    required: true,
-                    label: "Text",
-                    placeholder: "Enter JavaScript Object here..., e.g. { name: 'John', age: 30, city: 'New York' }"
-                }]}
+                toolName={'base64-tool'}
+                fields={[
+                    {
+                        name: "text",
+                        type: "textarea",
+                        required: true,
+                        label: "Base64 String",
+                        placeholder: "Enter text to encode/decode..."
+                    },
+                    {
+                        name:"encode-btn",
+                        type: "button",
+                        label: "Encode",
+                        onClick: (data) => execute({ ...data, action: "encode" })
+                    },
+                    {
+                        name:"decode-btn",
+                        type: "button",
+                        label: "Decode",
+                        onClick: (data) => execute({ ...data, action: "decode" })
+                    }
+                    
+                ]}
+                executeButtonVisible={false}
                 logs={logs}
                 onExecute={execute}
                 output={output}
@@ -126,14 +147,14 @@ function JSObjectToJSONConverter() {
     );
 }
 
-//Filename: JsonTool.tsx
+//Filename: Base64Tool.tsx
 registerDevTool({
     author: "Avinash",
-    categoryId: ToolCategories.JSON,
-    description: "Contains all Utilities for json",
-    id: "json-tool",
-    name: "JS Object to JSON Converter",
-    tool: JSObjectToJSONConverter
+    categoryId: ToolCategories.ENDECODERS,
+    description: "Contains utilities for encoding and decoding Base64 strings. Whether you need to encode data for transmission or decode received data, this tool has got you covered.",
+    id: "base64-tool",
+    name: "Base64 Encoder/Decoder",
+    tool: Base64EnDecoder
 })
 
-console.log("JSon tool imported")
+console.log("Base64 tool imported")

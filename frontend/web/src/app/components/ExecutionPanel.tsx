@@ -7,14 +7,16 @@ import { OutputCard } from "./OutputCard";
 interface FormField {
   name: string;
   label: string;
-  type: "text" | "file" | "select" | "number" | "textarea";
+  type: "text" | "file" | "select" | "number" | "textarea"|"button";
   placeholder?: string;
   required?: boolean;
   options?: string[];
   description?: string;
+  onClick?: (formData: Record<string, any>) => void; // For button type
 }
 
 interface ExecutionPanelProps {
+  executeButtonVisible?: boolean;
   isRemoteAvailable: boolean;
   isExecuting: boolean;
   logs: LogEntry[]
@@ -24,7 +26,7 @@ interface ExecutionPanelProps {
   output?: DevToolOutput
 }
 
-export function ExecutionPanel({ isRemoteAvailable, isExecuting, logs, fields, onExecute, output }: ExecutionPanelProps) {
+export function ExecutionPanel({ executeButtonVisible = true, isRemoteAvailable, isExecuting, logs, fields, onExecute, output }: ExecutionPanelProps) {
   const [formData, setFormData] = useState<Record<string, any>>({});
   const [executionMode, setExecutionMode] = useState<"local" | "remote">("local");
 
@@ -109,18 +111,20 @@ export function ExecutionPanel({ isRemoteAvailable, isExecuting, logs, fields, o
         <form onSubmit={(e) => { e.preventDefault(); onExecute(formData) }} style={{ display: "flex", flexDirection: "column", gap: "var(--dt-space-5)" }}>
           {fields.map((field) => (
             <div key={field.name}>
-              <label style={{
-                display: "block",
-                fontSize: "var(--dt-text-sm)",
-                fontWeight: "var(--dt-font-medium)",
-                color: "var(--dt-text-primary)",
-                marginBottom: "var(--dt-space-2)"
+              {field.type !== "button" && (
+                <label style={{
+                  display: "block",
+                  fontSize: "var(--dt-text-sm)",
+                  fontWeight: "var(--dt-font-medium)",
+                  color: "var(--dt-text-primary)",
+                  marginBottom: "var(--dt-space-2)"
               }}>
                 {field.label}
                 {field.required && (
                   <span style={{ color: "var(--dt-accent-error)", marginLeft: "4px" }}>*</span>
                 )}
               </label>
+              )}
 
               {field.description && (
                 <p style={{
@@ -132,6 +136,27 @@ export function ExecutionPanel({ isRemoteAvailable, isExecuting, logs, fields, o
                 </p>
               )}
 
+              {
+                field.type==="button" && (
+                  <button
+                    type="button"
+                    onClick={() => field.onClick && field.onClick(formData)}
+                    style={{
+                      padding: "var(--dt-space-3) var(--dt-space-6)",
+                      backgroundColor: "var(--dt-accent-primary)",
+                      color: "white",
+                      border: "none",
+                      borderRadius: "var(--dt-radius-md)",
+                      fontSize: "var(--dt-text-sm)",
+                      fontWeight: "var(--dt-font-medium)",
+                      cursor: "pointer",
+                      transition: "all var(--dt-transition-fast)"
+                    }}
+                  >
+                    {field.label}
+                  </button>
+                )
+              }
               {field.type === "textarea" ? (
                 <textarea
                   value={formData[field.name] || ""}
@@ -201,26 +226,12 @@ export function ExecutionPanel({ isRemoteAvailable, isExecuting, logs, fields, o
                   </label>
                 </div>
               ) : (
-                <input
-                  type={field.type}
-                  value={formData[field.name] || ""}
-                  onChange={(e) => handleFieldChange(field.name, e.target.value)}
-                  placeholder={field.placeholder}
-                  required={field.required}
-                  style={{
-                    width: "100%",
-                    padding: "var(--dt-space-3)",
-                    backgroundColor: "var(--dt-bg-tertiary)",
-                    border: "1px solid var(--dt-border-primary)",
-                    borderRadius: "var(--dt-radius-md)",
-                    color: "var(--dt-text-primary)",
-                    fontSize: "var(--dt-text-sm)"
-                  }}
-                />
+                <></>
               )}
             </div>
           ))}
 
+            {executeButtonVisible && 
           <button
             type="submit"
             disabled={isExecuting}
@@ -242,6 +253,7 @@ export function ExecutionPanel({ isRemoteAvailable, isExecuting, logs, fields, o
               opacity: isExecuting ? 0.6 : 1
             }}
           >
+            
             {isExecuting ? (
               <>
                 <Loader2 size={20} style={{ animation: "spin 1s linear infinite" }} />
@@ -254,6 +266,7 @@ export function ExecutionPanel({ isRemoteAvailable, isExecuting, logs, fields, o
               </>
             )}
           </button>
+          }
         </form>
       </div>
 

@@ -14,6 +14,7 @@ export const ToolCategories = {
     APK: "apk-aab-tools",
     DEV_UTILS: "dev-utils",
     JSON: "json-utils",
+    ENDECODERS: "endecoders",
 } as const
 
 
@@ -52,7 +53,16 @@ class CategoryManager {
         icon: Code,
         color: "var(--dt-category-utility)",
         description: "All JSON utilities"
-    }];
+    },
+
+    {
+        id:ToolCategories.ENDECODERS,
+        name: "Encoders/Decoders",
+        icon: Code,
+        color: "var(--dt-category-utility)",
+        description: "Base64, URL encoding, HTML encoding, and more"
+    }
+];
     getCategories(): ToolCategory[] {
         return this.avilableCategories;
     }
