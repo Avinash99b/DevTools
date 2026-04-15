@@ -5,6 +5,7 @@ import { Link } from "react-router";
 import { ArrowLeft } from "lucide-react";
 import type { LogEntry } from "../../components/TerminalOutput";
 import type { DevToolOutput } from "../../types/DevToolOutput";
+import { ToolCategories } from "../../core/CategoryManager";
 
 
 function JsonTool() {
@@ -126,7 +127,7 @@ function JsonTool() {
 //Filename: JsonTool.tsx
 registerDevTool({
     author: "Avinash",
-    categoryId: "json-utils",
+    categoryId: ToolCategories.JSON,
     description: "Contains all Utilities for json",
     id: "json-tool",
     name: "JSON Utilities",
