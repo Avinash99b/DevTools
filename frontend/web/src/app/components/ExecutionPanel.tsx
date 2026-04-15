@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Play, Loader2, AlertCircle, CheckCircle2, Settings } from "lucide-react";
+import { Play, Loader2 } from "lucide-react";
 import { TerminalOutput, type LogEntry } from "./TerminalOutput";
 import type { DevToolOutput } from "../types/DevToolOutput";
 import { OutputCard } from "./OutputCard";

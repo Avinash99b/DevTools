@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Server, Cpu, HardDrive, Activity, Zap, Clock, TrendingUp } from "lucide-react";
+import { Cpu, HardDrive, Activity, Clock } from "lucide-react";
 import { TerminalOutput } from "../components/TerminalOutput";
 import { StatusBadge } from "../components/StatusBadge";
 

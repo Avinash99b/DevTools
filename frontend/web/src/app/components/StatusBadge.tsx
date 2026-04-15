@@ -1,5 +1,3 @@
-import { Circle } from "lucide-react";
-
 type StatusType = "running" | "success" | "error" | "warning" | "idle" | "queued";
 
 interface StatusBadgeProps {

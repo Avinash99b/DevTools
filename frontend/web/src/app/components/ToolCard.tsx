@@ -1,4 +1,4 @@
-import { Download, Star, GitBranch, ExternalLink, Settings, Play } from "lucide-react";
+import { Settings, Play } from "lucide-react";
 import { Link } from "react-router";
 import CategoryManager from "../core/CategoryManager";
 import type { DevTool } from "../types/DevTool";

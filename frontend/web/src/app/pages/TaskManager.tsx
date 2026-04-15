@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Play, Pause, X, RotateCcw, Clock, CheckCircle2, XCircle, AlertCircle } from "lucide-react";
+import { Pause, X, RotateCcw } from "lucide-react";
 import { StatusBadge } from "../components/StatusBadge";
 
 interface Task {

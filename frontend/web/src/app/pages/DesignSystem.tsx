@@ -1,4 +1,4 @@
-import { Play, Download, Settings, Trash2, CheckCircle2, XCircle, AlertCircle, Info } from "lucide-react";
+import { Settings } from "lucide-react";
 import { ToolCard } from "../components/ToolCard";
 import { StatusBadge } from "../components/StatusBadge";
 import { TerminalOutput } from "../components/TerminalOutput";
@@ -447,6 +447,7 @@ export function DesignSystem() {
             <ToolCard
               id="sample"
               name="Sample Plugin"
+              tool={function(){}}
               description="This is a sample plugin demonstrating the card component design"
               categoryId="apk-aab-tools"
               author="DevTools Team"

@@ -4,7 +4,6 @@ import {
     Video,
     Package,
     Wrench,
-    Italic,
     Code
 } from "lucide-react";
 
@@ -57,4 +56,4 @@ class CategoryManager {
 
 export default new CategoryManager();
 
-const modules = import.meta.glob("../tools/**/*.tsx", { eager: true })
+import.meta.glob("../tools/**/*.tsx", { eager: true })

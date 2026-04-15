@@ -1,12 +1,6 @@
 import { Link } from "react-router";
 import { 
-  Image, 
-  Video, 
-  Package, 
-  Wrench, 
   ArrowRight,
-  Zap,
-  Users
 } from "lucide-react";
 import type { ToolCategory } from "../types/ToolCategory";
 import CategoryManager from "../core/CategoryManager";

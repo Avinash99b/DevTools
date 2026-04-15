@@ -2,7 +2,6 @@ import { Outlet, Link, useLocation } from "react-router";
 import { 
   Home, 
   Package, 
-  Play, 
   Activity, 
   Server, 
   Settings as SettingsIcon,

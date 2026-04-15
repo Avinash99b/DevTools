@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-import { Terminal, Copy, Download, Trash2, Maximize2 } from "lucide-react";
+import { Terminal, Copy, Trash2 } from "lucide-react";
 
 export interface LogEntry {
   timestamp: string;

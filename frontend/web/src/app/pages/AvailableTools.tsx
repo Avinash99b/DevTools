@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Filter, Download, Star, TrendingUp, Clock } from "lucide-react";
+import { Filter, TrendingUp, Clock } from "lucide-react";
 import { ToolCard } from "../components/ToolCard";
 import CategoryManager from "../core/CategoryManager";
 import DevToolManager from "../core/DevToolManager";
