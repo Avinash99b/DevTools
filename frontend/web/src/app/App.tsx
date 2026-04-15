@@ -4,7 +4,7 @@ import '../styles/devtools-theme.css';
 import "./ToolLoader"
 import { useEffect, useState } from 'react';
 import { loadTools } from './ToolLoader';
-
+//TODO: Add Popups for showing success and error messages instead of alert(), and implement a global notification system for the same.
 export default function App() {
   const [ready, setReady] = useState(false);
 
