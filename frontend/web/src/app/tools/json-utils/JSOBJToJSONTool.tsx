@@ -93,7 +93,7 @@ function JSObjectToJSONConverter() {
                     color: "var(--dt-text-primary)",
                     margin: "0 0 var(--dt-space-2) 0"
                 }}>
-                    JSON Converter
+                    JS Object to JSON Converter
                 </h1>
 
                 <p style={{
@@ -130,7 +130,7 @@ function JSObjectToJSONConverter() {
 registerDevTool({
     author: "Avinash",
     categoryId: ToolCategories.JSON,
-    description: "Contains all Utilities for json",
+    description: "JS Object to JSON Converter is a tool that transforms JavaScript objects into JSON strings. It takes a JavaScript object as input and produces a formatted JSON string as output, making it easier to read and use in various applications.",
     id: "json-tool",
     name: "JS Object to JSON Converter",
     tool: JSObjectToJSONConverter
