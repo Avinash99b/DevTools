@@ -56,6 +56,10 @@ export function ExecutionPanel({ executeButtonVisible = true, isRemoteAvailable,
     setFileState(prev => {
       const updated = [...(prev[fieldName] || [])];
       updated[index].selected = !updated[index].selected;
+
+      //Remove unselected files from formData
+      const selectedFiles = updated.filter(item => item.selected).map(item => item.file);
+      handleFieldChange(fieldName, selectedFiles);
       return { ...prev, [fieldName]: updated };
     });
   };

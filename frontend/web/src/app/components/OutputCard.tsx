@@ -5,6 +5,8 @@ import "prismjs/themes/prism.css";
 
 import type { DevToolOutput, DevToolTextOutput, DevToolFileOutput, DevToolImageOutput, DevToolFilesOutput, DevToolVideoOutput } from "../types/DevToolOutput";
 
+import JSZip from "jszip";
+
 interface TerminalOutputProps {
   output: DevToolOutput;
 }
@@ -97,29 +99,108 @@ export function OutputCard({ output }: TerminalOutputProps) {
 
       case "images":
         return (
-          <div style={{ padding: "var(--dt-space-4)", display: "flex", gap: 8, flexWrap: "wrap" }}>
-            {(Array.isArray(output.data) ? output.data : [output.data]).map((imgSrc, idx) => (
-              <div key={idx} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }}>
-                <img
-                  key={idx}
-                  src={typeof imgSrc === "string" ? imgSrc : URL.createObjectURL(imgSrc)}
-                  alt={`output-${idx}`}
-                  style={{
-                    width: 150,
-                    height: 150,
-                    objectFit: "cover",
-                    borderRadius: "var(--dt-radius-md)",
-                    cursor: "zoom-in",
-                  }}
-                  onClick={() => setZoomImage(typeof imgSrc === "string" ? imgSrc : URL.createObjectURL(imgSrc))}
-                />
+          <div
+            style={{
+              padding: "var(--dt-space-4)",
+              display: "flex",
+              gap: 8,
+              flexWrap: "wrap"
+            }}
+          >
+            {(Array.isArray(output.data) ? output.data : [output.data]).map(
+              (imgSrc, idx) => {
+                const src =
+                  typeof imgSrc === "string"
+                    ? imgSrc
+                    : URL.createObjectURL(imgSrc);
 
-                {/* Display file size */}
-                <div style={{ fontSize: 12, color: "var(--dt-text-muted)" }}>
-                  Size: {formatFileSize(typeof imgSrc === "string" ? undefined : imgSrc?.size)}
-                </div>
-              </div>
-            ))}
+                const handleDownload = async () => {
+                  try {
+                    let blob: Blob;
+
+                    if (typeof imgSrc === "string") {
+                      const res = await fetch(imgSrc);
+                      blob = await res.blob();
+                    } else {
+                      blob = imgSrc;
+                    }
+
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement("a");
+                    a.href = url;
+                    a.download = `image-${idx}.png`;
+                    document.body.appendChild(a);
+                    a.click();
+                    a.remove();
+                    URL.revokeObjectURL(url);
+                  } catch (err) {
+                    console.error("Download failed", err);
+                  }
+                };
+
+                return (
+                  <div
+                    key={idx}
+                    style={{
+                      position: "relative",
+                      display: "flex",
+                      flexDirection: "column",
+                      alignItems: "center",
+                      gap: 4
+                    }}
+                  >
+                    {/* IMAGE */}
+                    <img
+                      src={src}
+                      alt={`output-${idx}`}
+                      style={{
+                        width: 150,
+                        height: 150,
+                        objectFit: "cover",
+                        borderRadius: "var(--dt-radius-md)",
+                        cursor: "zoom-in"
+                      }}
+                      onClick={() => setZoomImage(src)}
+                    />
+
+                    {/* DOWNLOAD BUTTON */}
+                    <div
+                      onClick={handleDownload}
+                      style={{
+                        position: "absolute",
+                        top: 6,
+                        right: 6,
+                        width: 28,
+                        height: 28,
+                        borderRadius: "50%",
+                        background: "rgba(0,0,0,0.6)",
+                        backdropFilter: "blur(6px)",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        cursor: "pointer",
+                        transition: "all 0.2s ease"
+                      }}
+                    >
+                      ⬇
+                    </div>
+
+                    {/* FILE SIZE */}
+                    <div
+                      style={{
+                        fontSize: 12,
+                        color: "var(--dt-text-muted)"
+                      }}
+                    >
+                      Size:{" "}
+                      {formatFileSize(
+                        typeof imgSrc === "string" ? undefined : imgSrc?.size
+                      )}
+                    </div>
+                  </div>
+                );
+              }
+            )}
           </div>
         );
 
@@ -238,6 +319,43 @@ export function OutputCard({ output }: TerminalOutputProps) {
           }}
         >
           {output.type.toUpperCase()}
+
+          {/* Download Zip Button */}
+          {(output.type === "files" || output.type === "images") && (
+            <a
+              href="#"
+              style={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 6,
+                color: "var(--dt-accent-primary)",
+                textDecoration: "none",
+                marginLeft: 16,
+              }}
+              onClick={(e) => {
+                e.preventDefault();
+                // Implement ZIP download logic here
+
+                const files = Array.isArray(output.data) ? output.data : [output.data];
+                const zip = new JSZip();
+                files.forEach((file, idx) => {
+                  const fileName = typeof file === "string" ? `file-${idx + 1}${file.substring(file.lastIndexOf("."))}` : file.name || `file-${idx + 1}`;
+                  zip.file(fileName, file);
+                });
+                zip.generateAsync({ type: "blob" }).then((content) => {
+                  const url = URL.createObjectURL(content);
+                  const a = document.createElement("a");
+                  a.href = url;
+                  a.download = "files.zip";
+                  a.click();
+                  URL.revokeObjectURL(url);
+                });
+              }}
+            >
+              <Download size={14} />
+              Download All
+            </a>
+          )}
         </div>
       </div>
 
