@@ -1,9 +1,9 @@
 import { useState, useRef } from "react";
-import { Terminal, Copy, Download, Maximize2 } from "lucide-react";
+import { Terminal, Copy, Download } from "lucide-react";
 import Prism from "prismjs";
 import "prismjs/themes/prism.css";
 
-import type { DevToolOutput, DevToolTextOutput, DevToolFileOutput, DevToolImageOutput, DevToolFilesOutput, DevToolVideoOutput } from "../types/DevToolOutput";
+import type { DevToolOutput } from "../types/DevToolOutput";
 
 import JSZip from "jszip";
 
