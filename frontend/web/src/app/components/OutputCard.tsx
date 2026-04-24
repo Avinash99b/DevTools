@@ -3,7 +3,7 @@ import { Terminal, Copy, Download, Maximize2 } from "lucide-react";
 import Prism from "prismjs";
 import "prismjs/themes/prism.css";
 
-import type { DevToolOutput } from "../types/DevToolOutput";
+import type { DevToolOutput, DevToolTextOutput, DevToolFileOutput, DevToolImageOutput, DevToolFilesOutput, DevToolVideoOutput } from "../types/DevToolOutput";
 
 interface TerminalOutputProps {
   output: DevToolOutput;
@@ -74,9 +74,9 @@ export function OutputCard({ output }: TerminalOutputProps) {
               style={{
                 margin: 0,
                 padding: "var(--dt-space-4)",
-                width: "100%",          
-                overflowX: "auto",        
-                overflowY: "hidden", 
+                width: "100%",
+                overflowX: "auto",
+                overflowY: "hidden",
                 boxSizing: "border-box",
               }}
             >
@@ -95,51 +95,49 @@ export function OutputCard({ output }: TerminalOutputProps) {
         );
       }
 
-      case "image":
+      case "images":
         return (
-          <div style={{ padding: "var(--dt-space-4)", position: "relative" }}>
-            <img
-              src={output.data}
-              alt="output"
-              style={{
-                maxWidth: "100%",
-                borderRadius: "var(--dt-radius-md)",
-                cursor: "zoom-in",
-              }}
-              onClick={() => setZoomImage(output.data)}
-            />
+          <div style={{ padding: "var(--dt-space-4)", display: "flex", gap: 8, flexWrap: "wrap" }}>
+            {(Array.isArray(output.data) ? output.data : [output.data]).map((imgSrc, idx) => (
+              <div key={idx} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }}>
+                <img
+                  key={idx}
+                  src={typeof imgSrc === "string" ? imgSrc : URL.createObjectURL(imgSrc)}
+                  alt={`output-${idx}`}
+                  style={{
+                    width: 150,
+                    height: 150,
+                    objectFit: "cover",
+                    borderRadius: "var(--dt-radius-md)",
+                    cursor: "zoom-in",
+                  }}
+                  onClick={() => setZoomImage(typeof imgSrc === "string" ? imgSrc : URL.createObjectURL(imgSrc))}
+                />
 
-            {/* Zoom button */}
-            <button
-              onClick={() => setZoomImage(output.data)}
-              style={{
-                position: "absolute",
-                top: 10,
-                right: 10,
-                background: "rgba(0,0,0,0.5)",
-                border: "none",
-                borderRadius: 6,
-                padding: 6,
-                cursor: "pointer",
-                color: "#fff",
-              }}
-            >
-              <Maximize2 size={16} />
-            </button>
+                {/* Display file size */}
+                <div style={{ fontSize: 12, color: "var(--dt-text-muted)" }}>
+                  Size: {formatFileSize(typeof imgSrc === "string" ? undefined : imgSrc?.size)}
+                </div>
+              </div>
+            ))}
           </div>
         );
 
-      case "video":
+      case "videos":
         return (
-          <div style={{ padding: "var(--dt-space-4)" }}>
-            <video
-              src={output.data}
-              controls
-              style={{
-                width: "100%",
-                borderRadius: "var(--dt-radius-md)",
-              }}
-            />
+          <div style={{ padding: "var(--dt-space-4)", display: "flex", gap: 8, flexWrap: "wrap" }}>
+            {(Array.isArray(output.data) ? output.data : [output.data]).map((videoSrc, idx) => (
+              <video
+                key={idx}
+                src={typeof videoSrc === "string" ? videoSrc : URL.createObjectURL(videoSrc)}
+                controls
+                style={{
+                  width: 300,
+                  height: 200,
+                  borderRadius: "var(--dt-radius-md)",
+                }}
+              />
+            ))}
           </div>
         );
 
@@ -166,7 +164,7 @@ export function OutputCard({ output }: TerminalOutputProps) {
             </div>
 
             <a
-              href={output.data?.url || output.data}
+              href={URL.createObjectURL(output.data)}
               download
               style={{
                 display: "inline-flex",
@@ -195,7 +193,8 @@ export function OutputCard({ output }: TerminalOutputProps) {
           backgroundColor: "var(--dt-bg-secondary)",
           border: "1px solid var(--dt-border-primary)",
           borderRadius: "var(--dt-radius-lg)",
-          overflow: "hidden",
+          overflowY: "scroll",
+          overflowX: "hidden",
           display: "flex",
           flexDirection: "column",
         }}

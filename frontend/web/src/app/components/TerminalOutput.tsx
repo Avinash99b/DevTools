@@ -11,6 +11,7 @@ interface TerminalOutputProps {
   logs?: LogEntry[];
   title?: string;
   height?: string;
+  clearLogs?: () => void;
 }
 
 const levelColors = {
@@ -30,7 +31,8 @@ const levelPrefixes = {
 export function TerminalOutput({ 
   logs = [], 
   title = "Logs",
-  height = "400px"
+  height = "400px",
+  clearLogs = () => {}
 }: TerminalOutputProps) {
   const [autoScroll, setAutoScroll] = useState(true);
   const outputRef = useRef<HTMLDivElement>(null);
@@ -48,10 +50,6 @@ export function TerminalOutput({
     navigator.clipboard.writeText(text);
   };
 
-  const clearLogs = () => {
-    // In real implementation, this would clear the logs
-    console.log("Clear logs");
-  };
 
   return (
     <div style={{
@@ -60,7 +58,8 @@ export function TerminalOutput({
       borderRadius: "var(--dt-radius-lg)",
       overflow: "hidden",
       display: "flex",
-      flexDirection: "column"
+      flexDirection: "column",
+      maxHeight: "62%"
     }}>
       {/* Header */}
       <div style={{

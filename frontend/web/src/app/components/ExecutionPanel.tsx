@@ -7,12 +7,21 @@ import { OutputCard } from "./OutputCard";
 interface FormField {
   name: string;
   label: string;
-  type: "text" | "file" | "select" | "number" | "textarea"|"button";
+  type: "text" | "file" | "select" | "number" | "textarea" | "button" | "seekbar";
   placeholder?: string;
   required?: boolean;
   options?: string[];
+  fileOptions?: {
+    accept?: string;
+    multiple?: boolean;
+  };
   description?: string;
   onClick?: (formData: Record<string, any>) => void; // For button type
+  seekbarOptions?: {
+    min: number;
+    max: number;
+    step: number;
+  };
 }
 
 interface ExecutionPanelProps {
@@ -24,14 +33,56 @@ interface ExecutionPanelProps {
   fields: FormField[];
   onExecute: (data: Record<string, any>) => void;
   output?: DevToolOutput
+  clearLogs?: () => void;
 }
 
-export function ExecutionPanel({ executeButtonVisible = true, isRemoteAvailable, isExecuting, logs, fields, onExecute, output }: ExecutionPanelProps) {
+interface FileItem {
+  file: File;
+  preview: string;
+  selected: boolean;
+}
+
+
+export function ExecutionPanel({ executeButtonVisible = true, isRemoteAvailable, isExecuting, logs, fields, onExecute, output, clearLogs }: ExecutionPanelProps) {
   const [formData, setFormData] = useState<Record<string, any>>({});
   const [executionMode, setExecutionMode] = useState<"local" | "remote">("local");
+  const [fileState, setFileState] = useState<Record<string, FileItem[]>>({});
 
   const handleFieldChange = (name: string, value: any) => {
     setFormData(prev => ({ ...prev, [name]: value }));
+  };
+
+  const toggleSelect = (fieldName: string, index: number) => {
+    setFileState(prev => {
+      const updated = [...(prev[fieldName] || [])];
+      updated[index].selected = !updated[index].selected;
+      return { ...prev, [fieldName]: updated };
+    });
+  };
+
+  const removeFile = (fieldName: string, index: number) => {
+    setFileState(prev => {
+      const updated = [...(prev[fieldName] || [])];
+      updated.splice(index, 1);
+      return { ...prev, [fieldName]: updated };
+    });
+  };
+
+  const handleFileChange = (name: string, files: FileList | null) => {
+    if (!files) return;
+
+    const newFiles: FileItem[] = Array.from(files).map(file => ({
+      file,
+      preview: URL.createObjectURL(file),
+      selected: true
+    }));
+
+    setFileState(prev => ({
+      ...prev,
+      [name]: [...(prev[name] || []), ...newFiles]
+    }));
+
+    handleFieldChange(name, newFiles.map(f => f.file));
   };
 
   return (
@@ -118,12 +169,12 @@ export function ExecutionPanel({ executeButtonVisible = true, isRemoteAvailable,
                   fontWeight: "var(--dt-font-medium)",
                   color: "var(--dt-text-primary)",
                   marginBottom: "var(--dt-space-2)"
-              }}>
-                {field.label}
-                {field.required && (
-                  <span style={{ color: "var(--dt-accent-error)", marginLeft: "4px" }}>*</span>
-                )}
-              </label>
+                }}>
+                  {field.label}
+                  {field.required && (
+                    <span style={{ color: "var(--dt-accent-error)", marginLeft: "4px" }}>*</span>
+                  )}
+                </label>
               )}
 
               {field.description && (
@@ -137,7 +188,7 @@ export function ExecutionPanel({ executeButtonVisible = true, isRemoteAvailable,
               )}
 
               {
-                field.type==="button" && (
+                field.type === "button" && (
                   <button
                     type="button"
                     onClick={() => field.onClick && field.onClick(formData)}
@@ -198,74 +249,236 @@ export function ExecutionPanel({ executeButtonVisible = true, isRemoteAvailable,
                     </option>
                   ))}
                 </select>
-              ) : field.type === "file" ? (
-                <div style={{
-                  padding: "var(--dt-space-6)",
-                  backgroundColor: "var(--dt-bg-tertiary)",
-                  border: "2px dashed var(--dt-border-secondary)",
-                  borderRadius: "var(--dt-radius-md)",
-                  textAlign: "center",
-                  cursor: "pointer"
-                }}>
-                  <input
-                    type="file"
-                    onChange={(e) => handleFieldChange(field.name, e.target.files?.[0])}
-                    required={field.required}
-                    style={{ display: "none" }}
-                    id={field.name}
-                  />
-                  <label
-                    htmlFor={field.name}
-                    style={{
+              ) :
+
+                field.type === "file" && (
+                  <div>
+                    {/* Upload Box */}
+                    <div style={{
+                      padding: "var(--dt-space-6)",
+                      background: "linear-gradient(145deg, var(--dt-bg-tertiary), var(--dt-bg-secondary))",
+                      border: "2px dashed var(--dt-border-secondary)",
+                      borderRadius: "var(--dt-radius-lg)",
+                      textAlign: "center",
                       cursor: "pointer",
-                      color: "var(--dt-text-secondary)",
+                      transition: "all 0.2s ease"
+                    }}>
+                      <input
+                        type="file"
+                        multiple={field.fileOptions?.multiple}
+                        accept={field.fileOptions?.accept}
+                        onChange={(e) => handleFileChange(field.name, e.target.files)}
+                        style={{ display: "none" }}
+                        id={field.name}
+                      />
+
+                      <label htmlFor={field.name} style={{
+                        cursor: "pointer",
+                        color: "var(--dt-text-secondary)",
+                        fontSize: "var(--dt-text-sm)"
+                      }}>
+                        ✨ Click or drag files here
+                      </label>
+                    </div>
+
+                    {/* Preview Grid */}
+                    <div style={{
+                      marginTop: "var(--dt-space-4)",
+                      display: "grid",
+                      gridTemplateColumns: "repeat(auto-fill, minmax(120px, 1fr))",
+                      gap: "var(--dt-space-3)"
+                    }}>
+                      {(fileState[field.name] || []).map((item, index) => {
+                        const isImage = item.file.type.startsWith("image/");
+                        const isVideo = item.file.type.startsWith("video/");
+
+                        return (
+                          <div key={index} style={{
+                            position: "relative",
+                            borderRadius: "var(--dt-radius-md)",
+                            overflow: "hidden",
+                            border: item.selected
+                              ? "2px solid var(--dt-accent-primary)"
+                              : "1px solid var(--dt-border-primary)",
+                            transition: "all 0.2s ease",
+                            boxShadow: item.selected
+                              ? "0 0 0 2px rgba(100,150,255,0.2)"
+                              : "none"
+                          }}>
+                            {/* Preview */}
+                            {isImage && (
+                              <img
+                                src={item.preview}
+                                style={{
+                                  width: "100%",
+                                  height: "100px",
+                                  objectFit: "cover"
+                                }}
+                              />
+                            )}
+
+                            {isVideo && (
+                              <video
+                                src={item.preview}
+                                style={{
+                                  width: "100%",
+                                  height: "100px",
+                                  objectFit: "cover"
+                                }}
+                              />
+                            )}
+
+                            {!isImage && !isVideo && (
+                              <div style={{
+                                height: "100px",
+                                display: "flex",
+                                alignItems: "center",
+                                justifyContent: "center",
+                                background: "var(--dt-bg-tertiary)",
+                                fontSize: "12px"
+                              }}>
+                                {item.file.name}
+                              </div>
+                            )}
+
+                            {/* Select Toggle */}
+                            <div
+                              onClick={() => toggleSelect(field.name, index)}
+                              style={{
+                                position: "absolute",
+                                top: 6,
+                                right: 6,
+                                width: 20,
+                                height: 20,
+                                borderRadius: "50%",
+                                background: item.selected
+                                  ? "var(--dt-accent-primary)"
+                                  : "rgba(0,0,0,0.5)",
+                                display: "flex",
+                                alignItems: "center",
+                                justifyContent: "center",
+                                cursor: "pointer",
+                                fontSize: "12px",
+                                color: "white"
+                              }}
+                            >
+                              {item.selected ? "✓" : ""}
+                            </div>
+
+                            {/* Remove Button */}
+                            <div
+                              onClick={() => removeFile(field.name, index)}
+                              style={{
+                                position: "absolute",
+                                top: 6,
+                                left: 6,
+                                width: 20,
+                                height: 20,
+                                borderRadius: "50%",
+                                background: "rgba(255,0,0,0.8)",
+                                display: "flex",
+                                alignItems: "center",
+                                justifyContent: "center",
+                                cursor: "pointer",
+                                fontSize: "12px",
+                                color: "white"
+                              }}
+                            >
+                              ✕
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+
+
+              {
+                field.type === "seekbar" && (
+                  <div style={{ padding: "var(--dt-space-3)" }}>
+                    <input
+                      type="range"
+                      min={field.seekbarOptions?.min}
+                      max={field.seekbarOptions?.max}
+                      step={field.seekbarOptions?.step}
+                      value={formData[field.name] || field.seekbarOptions?.max || 100}
+                      onChange={(e) => handleFieldChange(field.name, e.target.value)}
+                      style={{ width: "100%" }}
+                    />
+                    <div style={{
+                      display: "flex",
+                      justifyContent: "space-between",
+                      fontSize: "var(--dt-text-xs)",
+                      color: "var(--dt-text-secondary)"
+                    }}>
+                      <span>{field.seekbarOptions?.min}</span>
+                      <span>Current: {formData[field.name] || field.seekbarOptions?.max || 100}</span>
+                      <span>{field.seekbarOptions?.max}</span>
+                    </div>
+                  </div>
+                )
+              }
+
+
+              {
+                field.type === "number" && (
+                  <input
+                    type="number"
+                    value={formData[field.name] || ""}
+                    onChange={(e) => handleFieldChange(field.name, e.target.value)}
+                    placeholder={field.placeholder}
+                    required={field.required}
+                    style={{
+                      width: "100%",
+                      padding: "var(--dt-space-3)",
+                      backgroundColor: "var(--dt-bg-tertiary)",
+                      border: "1px solid var(--dt-border-primary)",
+                      borderRadius: "var(--dt-radius-md)",
+                      color: "var(--dt-text-primary)",
                       fontSize: "var(--dt-text-sm)"
                     }}
-                  >
-                    {formData[field.name]?.name || "Click to select file or drag & drop"}
-                  </label>
-                </div>
-              ) : (
-                <></>
-              )}
+                  />
+                )
+              }
             </div>
           ))}
 
-            {executeButtonVisible && 
-          <button
-            type="submit"
-            disabled={isExecuting}
-            style={{
-              marginTop: "var(--dt-space-4)",
-              padding: "var(--dt-space-3) var(--dt-space-6)",
-              backgroundColor: isExecuting ? "var(--dt-bg-tertiary)" : "var(--dt-accent-primary)",
-              color: "white",
-              border: "none",
-              borderRadius: "var(--dt-radius-md)",
-              fontSize: "var(--dt-text-base)",
-              fontWeight: "var(--dt-font-semibold)",
-              cursor: isExecuting ? "not-allowed" : "pointer",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              gap: "var(--dt-space-2)",
-              transition: "all var(--dt-transition-fast)",
-              opacity: isExecuting ? 0.6 : 1
-            }}
-          >
-            
-            {isExecuting ? (
-              <>
-                <Loader2 size={20} style={{ animation: "spin 1s linear infinite" }} />
-                Executing...
-              </>
-            ) : (
-              <>
-                <Play size={20} />
-                Execute
-              </>
-            )}
-          </button>
+          {executeButtonVisible &&
+            <button
+              type="submit"
+              disabled={isExecuting}
+              style={{
+                marginTop: "var(--dt-space-4)",
+                padding: "var(--dt-space-3) var(--dt-space-6)",
+                backgroundColor: isExecuting ? "var(--dt-bg-tertiary)" : "var(--dt-accent-primary)",
+                color: "white",
+                border: "none",
+                borderRadius: "var(--dt-radius-md)",
+                fontSize: "var(--dt-text-base)",
+                fontWeight: "var(--dt-font-semibold)",
+                cursor: isExecuting ? "not-allowed" : "pointer",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                gap: "var(--dt-space-2)",
+                transition: "all var(--dt-transition-fast)",
+                opacity: isExecuting ? 0.6 : 1
+              }}
+            >
+
+              {isExecuting ? (
+                <>
+                  <Loader2 size={20} style={{ animation: "spin 1s linear infinite" }} />
+                  Executing...
+                </>
+              ) : (
+                <>
+                  <Play size={20} />
+                  Execute
+                </>
+              )}
+            </button>
           }
         </form>
       </div>
@@ -279,6 +492,7 @@ export function ExecutionPanel({ executeButtonVisible = true, isRemoteAvailable,
       }}>
         <TerminalOutput
           logs={logs}
+          clearLogs={ clearLogs}
           title="Logs"
           height="calc(100% - 40px)"
         />
