@@ -80,6 +80,7 @@ export function OutputCard({ output }: TerminalOutputProps) {
                 overflowX: "auto",
                 overflowY: "hidden",
                 boxSizing: "border-box",
+                maxWidth: "100%",
               }}
             >
               <code
@@ -154,8 +155,9 @@ export function OutputCard({ output }: TerminalOutputProps) {
                       src={src}
                       alt={`output-${idx}`}
                       style={{
-                        width: 150,
-                        height: 150,
+                        width: "min(100%, 220px)",
+                        height: "auto",
+                        maxHeight: "220px",
                         objectFit: "cover",
                         borderRadius: "var(--dt-radius-md)",
                         cursor: "zoom-in"
@@ -213,8 +215,9 @@ export function OutputCard({ output }: TerminalOutputProps) {
                 src={typeof videoSrc === "string" ? videoSrc : URL.createObjectURL(videoSrc)}
                 controls
                 style={{
-                  width: 300,
-                  height: 200,
+                  width: "min(100%, 420px)",
+                  maxWidth: "100%",
+                  height: "auto",
                   borderRadius: "var(--dt-radius-md)",
                 }}
               />
@@ -274,10 +277,11 @@ export function OutputCard({ output }: TerminalOutputProps) {
           backgroundColor: "var(--dt-bg-secondary)",
           border: "1px solid var(--dt-border-primary)",
           borderRadius: "var(--dt-radius-lg)",
-          overflowY: "scroll",
+          overflowY: "auto",
           overflowX: "hidden",
           display: "flex",
           flexDirection: "column",
+          minWidth: 0,
         }}
       >
         {/* Header */}

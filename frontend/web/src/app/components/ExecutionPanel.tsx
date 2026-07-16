@@ -3,6 +3,7 @@ import { Play, Loader2 } from "lucide-react";
 import { TerminalOutput, type LogEntry } from "./TerminalOutput";
 import type { DevToolOutput } from "../types/DevToolOutput";
 import { OutputCard } from "./OutputCard";
+import { useIsMobile } from "./ui/use-mobile";
 
 interface FormField {
   name: string;
@@ -44,6 +45,7 @@ interface FileItem {
 
 
 export function ExecutionPanel({ executeButtonVisible = true, isRemoteAvailable, isExecuting, logs, fields, onExecute, output, clearLogs }: ExecutionPanelProps) {
+  const isMobile = useIsMobile();
   const [formData, setFormData] = useState<Record<string, any>>({});
   const [executionMode, setExecutionMode] = useState<"local" | "remote">("local");
   const [fileState, setFileState] = useState<Record<string, FileItem[]>>({});
@@ -92,17 +94,19 @@ export function ExecutionPanel({ executeButtonVisible = true, isRemoteAvailable,
   return (
     <div style={{
       display: "grid",
-      gridTemplateColumns: "1fr 1fr",
+      gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr",
       gap: "var(--dt-space-6)",
-      height: "calc(100vh - 180px)"
+      height: isMobile ? "auto" : "calc(100vh - 180px)",
+      minHeight: isMobile ? "auto" : "420px"
     }}>
       {/* Left Panel - Input Form */}
       <div style={{
         backgroundColor: "var(--dt-bg-secondary)",
         border: "1px solid var(--dt-border-primary)",
         borderRadius: "var(--dt-radius-lg)",
-        padding: "var(--dt-space-6)",
-        overflowY: "auto"
+        padding: isMobile ? "var(--dt-space-4)" : "var(--dt-space-6)",
+        overflowY: "auto",
+        minWidth: 0
       }}>
         <div style={{
           display: "flex",
@@ -126,7 +130,8 @@ export function ExecutionPanel({ executeButtonVisible = true, isRemoteAvailable,
               backgroundColor: "var(--dt-bg-tertiary)",
               padding: "var(--dt-space-1)",
               borderRadius: "var(--dt-radius-md)",
-              border: "1px solid var(--dt-border-primary)"
+              border: "1px solid var(--dt-border-primary)",
+              flexWrap: "wrap"
             }}>
               <button
                 onClick={() => setExecutionMode("local")}
@@ -205,7 +210,8 @@ export function ExecutionPanel({ executeButtonVisible = true, isRemoteAvailable,
                       fontSize: "var(--dt-text-sm)",
                       fontWeight: "var(--dt-font-medium)",
                       cursor: "pointer",
-                      transition: "all var(--dt-transition-fast)"
+                      transition: "all var(--dt-transition-fast)",
+                      minHeight: "40px"
                     }}
                   >
                     {field.label}
@@ -221,6 +227,7 @@ export function ExecutionPanel({ executeButtonVisible = true, isRemoteAvailable,
                   rows={4}
                   style={{
                     width: "100%",
+                    boxSizing: "border-box",
                     padding: "var(--dt-space-3)",
                     backgroundColor: "var(--dt-bg-tertiary)",
                     border: "1px solid var(--dt-border-primary)",
@@ -228,7 +235,8 @@ export function ExecutionPanel({ executeButtonVisible = true, isRemoteAvailable,
                     color: "var(--dt-text-primary)",
                     fontSize: "var(--dt-text-sm)",
                     fontFamily: "var(--dt-font-sans)",
-                    resize: "vertical"
+                    resize: "vertical",
+                    minHeight: "132px"
                   }}
                 />
               ) : field.type === "select" ? (
@@ -238,12 +246,14 @@ export function ExecutionPanel({ executeButtonVisible = true, isRemoteAvailable,
                   required={field.required}
                   style={{
                     width: "100%",
+                    boxSizing: "border-box",
                     padding: "var(--dt-space-3)",
                     backgroundColor: "var(--dt-bg-tertiary)",
                     border: "1px solid var(--dt-border-primary)",
                     borderRadius: "var(--dt-radius-md)",
                     color: "var(--dt-text-primary)",
-                    fontSize: "var(--dt-text-sm)"
+                    fontSize: "var(--dt-text-sm)",
+                    minHeight: "42px"
                   }}
                 >
                   <option value="">Select an option</option>
@@ -289,7 +299,7 @@ export function ExecutionPanel({ executeButtonVisible = true, isRemoteAvailable,
                     <div style={{
                       marginTop: "var(--dt-space-4)",
                       display: "grid",
-                      gridTemplateColumns: "repeat(auto-fill, minmax(120px, 1fr))",
+                      gridTemplateColumns: "repeat(auto-fill, minmax(100px, 1fr))",
                       gap: "var(--dt-space-3)"
                     }}>
                       {(fileState[field.name] || []).map((item, index) => {
@@ -435,12 +445,14 @@ export function ExecutionPanel({ executeButtonVisible = true, isRemoteAvailable,
                     required={field.required}
                     style={{
                       width: "100%",
+                      boxSizing: "border-box",
                       padding: "var(--dt-space-3)",
                       backgroundColor: "var(--dt-bg-tertiary)",
                       border: "1px solid var(--dt-border-primary)",
                       borderRadius: "var(--dt-radius-md)",
                       color: "var(--dt-text-primary)",
-                      fontSize: "var(--dt-text-sm)"
+                      fontSize: "var(--dt-text-sm)",
+                      minHeight: "42px"
                     }}
                   />
                 )
@@ -467,8 +479,9 @@ export function ExecutionPanel({ executeButtonVisible = true, isRemoteAvailable,
                 justifyContent: "center",
                 gap: "var(--dt-space-2)",
                 transition: "all var(--dt-transition-fast)",
-                opacity: isExecuting ? 0.6 : 1
-              }}
+                 opacity: isExecuting ? 0.6 : 1,
+                 minHeight: "44px"
+               }}
             >
 
               {isExecuting ? (
@@ -492,7 +505,9 @@ export function ExecutionPanel({ executeButtonVisible = true, isRemoteAvailable,
         display: "flex",
         flexDirection: "column",
         gap: "var(--dt-space-4)",
-        overflow: "hidden"
+        overflow: "hidden",
+        minWidth: 0,
+        minHeight: isMobile ? "360px" : 0
       }}>
         <TerminalOutput
           logs={logs}
