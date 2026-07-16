@@ -151,6 +151,14 @@ body {
   background-color: var(--dt-bg-primary);
   color: var(--dt-text-primary);
   line-height: var(--dt-leading-normal);
+  margin: 0;
+  overflow-x: hidden;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
 }
 
 /* Monospace contexts */
@@ -214,4 +222,22 @@ code, pre, .terminal, .log-output {
 
 ::-webkit-scrollbar-thumb:hover {
   background: var(--dt-text-tertiary);
+}
+
+@media (max-width: 1023px) {
+  :root {
+    --dt-text-3xl: 1.7rem;
+    --dt-text-2xl: 1.4rem;
+    --dt-space-8: 1.75rem;
+  }
+}
+
+@media (max-width: 767px) {
+  :root {
+    --dt-text-3xl: 1.45rem;
+    --dt-text-2xl: 1.25rem;
+    --dt-text-xl: 1.1rem;
+    --dt-space-6: 1.25rem;
+    --dt-space-8: 1.5rem;
+  }
 }
