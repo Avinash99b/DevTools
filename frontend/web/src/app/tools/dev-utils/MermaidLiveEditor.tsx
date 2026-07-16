@@ -142,6 +142,7 @@ function MermaidLiveEditor() {
   const [templateId, setTemplateId] = useState<TemplateId>(DEFAULT_TEMPLATE);
   const [source, setSource] = useState(TEMPLATES[DEFAULT_TEMPLATE].source);
   const [svgMarkup, setSvgMarkup] = useState("");
+  const [svgPreviewUrl, setSvgPreviewUrl] = useState<string | null>(null);
   const [isRendering, setIsRendering] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [copiedSource, setCopiedSource] = useState(false);
@@ -227,6 +228,32 @@ function MermaidLiveEditor() {
     };
   }, [source, currentTheme, refreshToken]);
 
+  useEffect(() => {
+    if (!svgMarkup) {
+      setSvgPreviewUrl((previousUrl) => {
+        if (previousUrl) {
+          URL.revokeObjectURL(previousUrl);
+        }
+        return null;
+      });
+      return;
+    }
+
+    const blob = new Blob([svgMarkup], { type: "image/svg+xml;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+
+    setSvgPreviewUrl((previousUrl) => {
+      if (previousUrl) {
+        URL.revokeObjectURL(previousUrl);
+      }
+      return url;
+    });
+
+    return () => {
+      URL.revokeObjectURL(url);
+    };
+  }, [svgMarkup]);
+
   const copySource = async () => {
     await navigator.clipboard.writeText(source);
     setCopiedSource(true);
@@ -255,24 +282,18 @@ function MermaidLiveEditor() {
   };
 
   const downloadPng = async () => {
-    if (!svgMarkup) return;
+    if (!svgPreviewUrl) return;
 
-    const parser = new DOMParser();
-    const svgDoc = parser.parseFromString(svgMarkup, "image/svg+xml");
-    const svgElement = svgDoc.documentElement;
-    const viewBox = svgElement.getAttribute("viewBox")?.split(" ").map(Number) ?? [];
-    const width = Number(svgElement.getAttribute("width")) || viewBox[2] || 1200;
-    const height = Number(svgElement.getAttribute("height")) || viewBox[3] || 800;
-
-    const blob = new Blob([svgMarkup], { type: "image/svg+xml;charset=utf-8" });
-    const url = URL.createObjectURL(blob);
     const image = new Image();
 
     await new Promise<void>((resolve, reject) => {
       image.onload = () => resolve();
       image.onerror = () => reject(new Error("Unable to load SVG for PNG export."));
-      image.src = url;
+      image.src = svgPreviewUrl;
     });
+
+    const width = image.naturalWidth || 1200;
+    const height = image.naturalHeight || 800;
 
     const canvas = document.createElement("canvas");
     const scale = 2;
@@ -281,7 +302,6 @@ function MermaidLiveEditor() {
     const context = canvas.getContext("2d");
 
     if (!context) {
-      URL.revokeObjectURL(url);
       throw new Error("Unable to access canvas context for PNG export.");
     }
 
@@ -298,8 +318,6 @@ function MermaidLiveEditor() {
     document.body.appendChild(anchor);
     anchor.click();
     anchor.remove();
-
-    URL.revokeObjectURL(url);
   };
 
   const loadTemplate = (id: TemplateId) => {
@@ -636,11 +654,16 @@ function MermaidLiveEditor() {
                 <strong>Render error:</strong>
                 <div style={{ marginTop: "var(--dt-space-2)", whiteSpace: "pre-wrap" }}>{error}</div>
               </div>
-            ) : svgMarkup ? (
-              <div
-                aria-live="polite"
-                style={{ maxWidth: "100%" }}
-                dangerouslySetInnerHTML={{ __html: svgMarkup }}
+            ) : svgPreviewUrl ? (
+              <img
+                src={svgPreviewUrl}
+                alt="Rendered Mermaid diagram"
+                style={{
+                  maxWidth: "100%",
+                  width: "100%",
+                  height: "auto",
+                  display: "block",
+                }}
               />
             ) : (
               <div
