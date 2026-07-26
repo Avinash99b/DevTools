@@ -16,7 +16,8 @@ function Base64Encoder() {
     author: "System",
     categoryId: ToolCategories.ENDECODERS,
     description: "Encode and decode Base64 strings.",
-    tool: Base64Encoder
+    tool: Base64Encoder,
+  supportsRealtime: true
   };
 
   async function execute(data: Record<string, any>) {
@@ -76,5 +77,6 @@ registerDevTool({
   description: "Encode and decode Base64 strings.",
   id: "base64encoder-tool",
   name: "Base64 Encoder / Decoder",
-  tool: Base64Encoder
+  tool: Base64Encoder,
+  supportsRealtime: true
 });

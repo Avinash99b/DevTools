@@ -16,7 +16,8 @@ function SlugGenerator() {
     author: "System",
     categoryId: ToolCategories.DEV_UTILS,
     description: "Generate URL-friendly slugs from strings.",
-    tool: SlugGenerator
+    tool: SlugGenerator,
+  supportsRealtime: true
   };
 
   async function execute(data: Record<string, any>) {
@@ -75,5 +76,6 @@ registerDevTool({
   description: "Generate URL-friendly slugs from strings.",
   id: "sluggenerator-tool",
   name: "Slug Generator",
-  tool: SlugGenerator
+  tool: SlugGenerator,
+  supportsRealtime: true
 });

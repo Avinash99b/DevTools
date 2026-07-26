@@ -16,7 +16,8 @@ function RegexTester() {
     author: "System",
     categoryId: ToolCategories.DEV_UTILS,
     description: "Test regular expressions against text.",
-    tool: RegexTester
+    tool: RegexTester,
+  supportsRealtime: true
   };
 
   async function execute(data: Record<string, any>) {
@@ -120,5 +121,6 @@ registerDevTool({
   description: "Test regular expressions against text.",
   id: "regextester-tool",
   name: "Regex Tester",
-  tool: RegexTester
+  tool: RegexTester,
+  supportsRealtime: true
 });

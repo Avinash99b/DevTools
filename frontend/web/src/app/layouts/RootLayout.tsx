@@ -1,4 +1,5 @@
 import { Outlet, Link, useLocation } from "react-router";
+import { CommandPalette } from "../components/CommandPalette";
 import {
   Home,
   Package,
@@ -303,6 +304,7 @@ export function RootLayout() {
           overflow: "hidden",
         }}
       >
+        <CommandPalette />
         <header
           style={{
             minHeight: isPhone ? "72px" : "64px",

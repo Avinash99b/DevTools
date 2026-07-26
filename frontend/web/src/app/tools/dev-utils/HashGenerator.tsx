@@ -16,7 +16,8 @@ function HashGenerator() {
     author: "System",
     categoryId: ToolCategories.DEV_UTILS,
     description: "Generate cryptographic hashes (MD5, SHA-1, SHA-256).",
-    tool: HashGenerator
+    tool: HashGenerator,
+  supportsRealtime: true
   };
 
   async function execute(data: Record<string, any>) {
@@ -84,5 +85,6 @@ registerDevTool({
   description: "Generate cryptographic hashes (SHA-1, SHA-256).",
   id: "hashgenerator-tool",
   name: "Hash Generator",
-  tool: HashGenerator
+  tool: HashGenerator,
+  supportsRealtime: true
 });

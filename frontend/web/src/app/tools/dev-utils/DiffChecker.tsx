@@ -17,7 +17,8 @@ function DiffChecker() {
     author: "System",
     categoryId: ToolCategories.DEV_UTILS,
     description: "Compare text and find differences.",
-    tool: DiffChecker
+    tool: DiffChecker,
+  supportsRealtime: true
   };
 
   async function execute(data: Record<string, any>) {
@@ -88,5 +89,6 @@ registerDevTool({
   description: "Compare text and find differences.",
   id: "diffchecker-tool",
   name: "Diff Checker",
-  tool: DiffChecker
+  tool: DiffChecker,
+  supportsRealtime: true
 });
