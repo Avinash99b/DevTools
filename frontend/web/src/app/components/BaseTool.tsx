@@ -47,6 +47,8 @@ export function BaseTool({
   fields,
   executeButtonVisible = true
 }: BaseToolProps) {
+  const isRealtime = toolMeta.supportsRealtime;
+
   return (
     <div style={{ padding: "var(--dt-space-8)" }}>
       {/* Breadcrumb */}
@@ -120,7 +122,8 @@ export function BaseTool({
         isExecuting={isExecuting}
         toolName={toolMeta.id}
         fields={fields}
-        executeButtonVisible={executeButtonVisible}
+        executeButtonVisible={isRealtime ? false : executeButtonVisible}
+        isRealtime={isRealtime}
         logs={logs}
         onExecute={onExecute}
         output={output}

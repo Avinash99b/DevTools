@@ -17,7 +17,8 @@ function YamlJsonConverter() {
     author: "System",
     categoryId: ToolCategories.DEV_UTILS,
     description: "Convert between YAML and JSON formats.",
-    tool: YamlJsonConverter
+    tool: YamlJsonConverter,
+  supportsRealtime: true
   };
 
   async function execute(data: Record<string, any>) {
@@ -79,5 +80,6 @@ registerDevTool({
   description: "Convert between YAML and JSON formats.",
   id: "yamljsonconverter-tool",
   name: "YAML / JSON Converter",
-  tool: YamlJsonConverter
+  tool: YamlJsonConverter,
+  supportsRealtime: true
 });

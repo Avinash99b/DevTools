@@ -16,7 +16,8 @@ function WordCounter() {
     author: "System",
     categoryId: ToolCategories.DEV_UTILS,
     description: "Count characters, words, and lines in a text.",
-    tool: WordCounter
+    tool: WordCounter,
+  supportsRealtime: true
   };
 
   async function execute(data: Record<string, any>) {
@@ -66,5 +67,6 @@ registerDevTool({
   description: "Count characters, words, and lines in a text.",
   id: "wordcounter-tool",
   name: "Word/Character Counter",
-  tool: WordCounter
+  tool: WordCounter,
+  supportsRealtime: true
 });

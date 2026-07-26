@@ -16,7 +16,8 @@ function UrlEncoder() {
     author: "System",
     categoryId: ToolCategories.ENDECODERS,
     description: "Encode and decode URLs.",
-    tool: UrlEncoder
+    tool: UrlEncoder,
+  supportsRealtime: true
   };
 
   async function execute(data: Record<string, any>) {
@@ -76,5 +77,6 @@ registerDevTool({
   description: "Encode and decode URLs.",
   id: "urlencoder-tool",
   name: "URL Encoder / Decoder",
-  tool: UrlEncoder
+  tool: UrlEncoder,
+  supportsRealtime: true
 });

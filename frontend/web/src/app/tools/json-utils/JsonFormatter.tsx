@@ -16,7 +16,8 @@ function JsonFormatter() {
     author: "System",
     categoryId: ToolCategories.JSON,
     description: "Format and beautify JSON data.",
-    tool: JsonFormatter
+    tool: JsonFormatter,
+  supportsRealtime: true
   };
 
   async function execute(data: Record<string, any>) {
@@ -77,5 +78,6 @@ registerDevTool({
   description: "Format and beautify JSON data.",
   id: "jsonformatter-tool",
   name: "JSON Formatter",
-  tool: JsonFormatter
+  tool: JsonFormatter,
+  supportsRealtime: true
 });

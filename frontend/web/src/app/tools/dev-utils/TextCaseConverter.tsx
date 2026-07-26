@@ -16,7 +16,8 @@ function TextCaseConverter() {
     author: "System",
     categoryId: ToolCategories.DEV_UTILS,
     description: "Convert text between different letter cases.",
-    tool: TextCaseConverter
+    tool: TextCaseConverter,
+  supportsRealtime: true
   };
 
   async function execute(data: Record<string, any>) {
@@ -99,5 +100,6 @@ registerDevTool({
   description: "Convert text between different letter cases.",
   id: "textcaseconverter-tool",
   name: "Text Case Converter",
-  tool: TextCaseConverter
+  tool: TextCaseConverter,
+  supportsRealtime: true
 });

@@ -16,7 +16,8 @@ function TimestampConverter() {
     author: "System",
     categoryId: ToolCategories.DEV_UTILS,
     description: "Convert between Unix timestamps and human-readable dates.",
-    tool: TimestampConverter
+    tool: TimestampConverter,
+  supportsRealtime: true
   };
 
   async function execute(data: Record<string, any>) {
@@ -93,5 +94,6 @@ registerDevTool({
   description: "Convert between Unix timestamps and human-readable dates.",
   id: "timestampconverter-tool",
   name: "Timestamp Converter",
-  tool: TimestampConverter
+  tool: TimestampConverter,
+  supportsRealtime: true
 });

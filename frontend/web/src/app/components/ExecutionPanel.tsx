@@ -35,6 +35,7 @@ interface ExecutionPanelProps {
   onExecute: (data: Record<string, any>) => void;
   output?: DevToolOutput | DevToolOutput[];
   clearLogs?: () => void;
+  isRealtime?: boolean;
 }
 
 interface FileItem {
@@ -44,14 +45,20 @@ interface FileItem {
 }
 
 
-export function ExecutionPanel({ executeButtonVisible = true, isRemoteAvailable, isExecuting, logs, fields, onExecute, output, clearLogs }: ExecutionPanelProps) {
+export function ExecutionPanel({ executeButtonVisible = true, isRemoteAvailable, isExecuting, logs, fields, onExecute, output, clearLogs, isRealtime }: ExecutionPanelProps) {
   const isMobile = useIsMobile();
   const [formData, setFormData] = useState<Record<string, any>>({});
   const [executionMode, setExecutionMode] = useState<"local" | "remote">("local");
   const [fileState, setFileState] = useState<Record<string, FileItem[]>>({});
 
   const handleFieldChange = (name: string, value: any) => {
-    setFormData(prev => ({ ...prev, [name]: value }));
+    setFormData(prev => {
+      const next = { ...prev, [name]: value };
+      if (isRealtime) {
+        onExecute(next);
+      }
+      return next;
+    });
   };
 
   const toggleSelect = (fieldName: string, index: number) => {

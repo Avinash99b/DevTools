@@ -16,7 +16,8 @@ function XmlFormatter() {
     author: "System",
     categoryId: ToolCategories.DEV_UTILS,
     description: "Format and beautify XML data.",
-    tool: XmlFormatter
+    tool: XmlFormatter,
+  supportsRealtime: true
   };
 
   async function execute(data: Record<string, any>) {
@@ -105,5 +106,6 @@ registerDevTool({
   description: "Format and beautify XML data.",
   id: "xmlformatter-tool",
   name: "XML Formatter",
-  tool: XmlFormatter
+  tool: XmlFormatter,
+  supportsRealtime: true
 });

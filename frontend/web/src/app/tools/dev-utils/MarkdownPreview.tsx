@@ -17,7 +17,8 @@ function MarkdownPreview() {
     author: "System",
     categoryId: ToolCategories.DEV_UTILS,
     description: "Convert Markdown to HTML.",
-    tool: MarkdownPreview
+    tool: MarkdownPreview,
+  supportsRealtime: true
   };
 
   async function execute(data: Record<string, any>) {
@@ -63,5 +64,6 @@ registerDevTool({
   description: "Convert Markdown to HTML.",
   id: "markdownpreview-tool",
   name: "Markdown to HTML",
-  tool: MarkdownPreview
+  tool: MarkdownPreview,
+  supportsRealtime: true
 });

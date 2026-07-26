@@ -16,7 +16,8 @@ function ColorConverter() {
     author: "System",
     categoryId: ToolCategories.DEV_UTILS,
     description: "Convert between different color formats (HEX, RGB, HSL).",
-    tool: ColorConverter
+    tool: ColorConverter,
+  supportsRealtime: true
   };
 
   async function execute(data: Record<string, any>) {
@@ -153,5 +154,6 @@ registerDevTool({
   description: "Convert between different color formats (HEX, RGB, HSL).",
   id: "colorconverter-tool",
   name: "Color Converter",
-  tool: ColorConverter
+  tool: ColorConverter,
+  supportsRealtime: true
 });

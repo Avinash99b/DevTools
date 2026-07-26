@@ -16,7 +16,8 @@ function TextCleaner() {
     author: "System",
     categoryId: ToolCategories.DEV_UTILS,
     description: "Clean, trim, and manipulate whitespace in text.",
-    tool: TextCleaner
+    tool: TextCleaner,
+  supportsRealtime: true
   };
 
   async function execute(data: Record<string, any>) {
@@ -100,5 +101,6 @@ registerDevTool({
   description: "Clean, trim, and manipulate whitespace in text.",
   id: "textcleaner-tool",
   name: "Text Cleaner",
-  tool: TextCleaner
+  tool: TextCleaner,
+  supportsRealtime: true
 });

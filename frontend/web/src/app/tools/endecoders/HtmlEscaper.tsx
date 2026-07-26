@@ -16,7 +16,8 @@ function HtmlEscaper() {
     author: "System",
     categoryId: ToolCategories.ENDECODERS,
     description: "Escape and unescape HTML entities.",
-    tool: HtmlEscaper
+    tool: HtmlEscaper,
+  supportsRealtime: true
   };
 
   async function execute(data: Record<string, any>) {
@@ -86,5 +87,6 @@ registerDevTool({
   description: "Escape and unescape HTML entities.",
   id: "htmlescaper-tool",
   name: "HTML Escaper / Unescaper",
-  tool: HtmlEscaper
+  tool: HtmlEscaper,
+  supportsRealtime: true
 });

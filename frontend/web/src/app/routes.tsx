@@ -1,4 +1,4 @@
-import { createBrowserRouter } from "react-router";
+import { createHashRouter } from "react-router";
 import { RootLayout } from "./layouts/RootLayout";
 import { HomePage } from "./pages/HomePage";
 import { AvailableTools } from "./pages/AvailableTools";
@@ -17,7 +17,7 @@ function generateToolRoutes() {
 
 export function generateRouter() {
   const toolRoutes = generateToolRoutes();
-  return createBrowserRouter([
+  return createHashRouter([
     {
       path: "/",
       Component: RootLayout,
