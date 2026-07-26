@@ -265,6 +265,28 @@ export function OutputCard({ output }: TerminalOutputProps) {
           </div>
         );
 
+      case "html":
+        return (
+          <div
+            style={{
+              padding: "var(--dt-space-4)",
+              backgroundColor: "white",
+              color: "black",
+              borderRadius: "var(--dt-radius-md)",
+            }}
+            dangerouslySetInnerHTML={{ __html: output.data }}
+          />
+        );
+
+      case "text":
+        return (
+          <div style={{ padding: "var(--dt-space-4)" }}>
+            <pre style={{ margin: 0, whiteSpace: "pre-wrap", wordBreak: "break-all" }}>
+              {output.data}
+            </pre>
+          </div>
+        );
+
       default:
         return null;
     }
@@ -304,7 +326,7 @@ export function OutputCard({ output }: TerminalOutputProps) {
                 color: "var(--dt-text-primary)",
               }}
             >
-              Output
+              {output.title ? output.title : "Output"}
             </span>
           </div>
         </div>

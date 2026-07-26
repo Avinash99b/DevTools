@@ -8,7 +8,7 @@ import { useIsMobile } from "./ui/use-mobile";
 interface FormField {
   name: string;
   label: string;
-  type: "text" | "file" | "select" | "number" | "textarea" | "button" | "seekbar";
+  type: "text" | "file" | "select" | "number" | "textarea" | "button" | "seekbar" | "checkbox" | "radio";
   placeholder?: string;
   required?: boolean;
   options?: string[];
@@ -33,7 +33,7 @@ interface ExecutionPanelProps {
   toolName: string;
   fields: FormField[];
   onExecute: (data: Record<string, any>) => void;
-  output?: DevToolOutput
+  output?: DevToolOutput | DevToolOutput[];
   clearLogs?: () => void;
 }
 
@@ -457,6 +457,70 @@ export function ExecutionPanel({ executeButtonVisible = true, isRemoteAvailable,
                   />
                 )
               }
+              {
+                field.type === "checkbox" && (
+                   <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <input
+                      type="checkbox"
+                      checked={!!formData[field.name]}
+                      onChange={(e) => handleFieldChange(field.name, e.target.checked)}
+                      style={{
+                         width: "16px",
+                         height: "16px",
+                         cursor: "pointer",
+                         accentColor: "var(--dt-accent-primary)"
+                      }}
+                    />
+                    <span style={{ fontSize: "var(--dt-text-sm)", color: "var(--dt-text-secondary)" }}>
+                      {field.placeholder || "Enable"}
+                    </span>
+                  </div>
+                )
+              }
+              {
+                field.type === "text" && (
+                   <input
+                    type="text"
+                    value={formData[field.name] || ""}
+                    onChange={(e) => handleFieldChange(field.name, e.target.value)}
+                    placeholder={field.placeholder}
+                    required={field.required}
+                    style={{
+                      width: "100%",
+                      boxSizing: "border-box",
+                      padding: "var(--dt-space-3)",
+                      backgroundColor: "var(--dt-bg-tertiary)",
+                      border: "1px solid var(--dt-border-primary)",
+                      borderRadius: "var(--dt-radius-md)",
+                      color: "var(--dt-text-primary)",
+                      fontSize: "var(--dt-text-sm)",
+                      minHeight: "42px"
+                    }}
+                  />
+                )
+              }
+
+              {
+                field.type === "radio" && field.options && (
+                  <div style={{ display: 'flex', gap: '16px', flexWrap: 'wrap' }}>
+                    {field.options.map(option => (
+                      <label key={option} style={{ display: 'flex', alignItems: 'center', gap: '4px', cursor: 'pointer' }}>
+                        <input
+                          type="radio"
+                          name={field.name}
+                          value={option}
+                          checked={formData[field.name] === option}
+                          onChange={(e) => handleFieldChange(field.name, e.target.value)}
+                          style={{ accentColor: "var(--dt-accent-primary)" }}
+                        />
+                        <span style={{ fontSize: "var(--dt-text-sm)", color: "var(--dt-text-secondary)" }}>
+                          {option}
+                        </span>
+                      </label>
+                    ))}
+                  </div>
+                )
+              }
             </div>
           ))}
 
@@ -515,8 +579,15 @@ export function ExecutionPanel({ executeButtonVisible = true, isRemoteAvailable,
           title="Logs"
           height="calc(100% - 40px)"
         />
-        {output ?
-          <OutputCard output={output} /> : <></>}
+        {output ? (
+          Array.isArray(output) ? (
+            output.map((out, idx) => (
+              <OutputCard key={idx} output={out} />
+            ))
+          ) : (
+            <OutputCard output={output} />
+          )
+        ) : <></>}
       </div>
 
       {
