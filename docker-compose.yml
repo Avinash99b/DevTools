@@ -1,0 +1,29 @@
+version: '3.8'
+
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    ports:
+      - "3000:3000"
+    environment:
+      - PORT=3000
+      - ACCESS_SECRET=${ACCESS_SECRET}
+      - CORS_ORIGIN=${CORS_ORIGIN:-http://localhost:5173}
+      - PERSISTENT_FILE_SIZE_MAX=${PERSISTENT_FILE_SIZE_MAX:-10485760}
+      - TOTAL_STORAGE_CAP_MB=${TOTAL_STORAGE_CAP_MB:-1024}
+      - DB_PATH=/app/data/devtools.db
+      - STORAGE_PATH=/app/data/storage
+    volumes:
+      - data-volume:/app/data
+
+  frontend:
+    build:
+      context: ./frontend/web
+      dockerfile: Dockerfile
+    ports:
+      - "5173:80"
+
+volumes:
+  data-volume:
