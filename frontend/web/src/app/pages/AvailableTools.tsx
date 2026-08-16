@@ -1,15 +1,18 @@
 import { useMemo, useState } from "react";
+import { useParams } from "react-router";
 import { Filter, TrendingUp, Clock, Search } from "lucide-react";
 import { ToolCard } from "../components/ToolCard";
 import CategoryManager from "../core/CategoryManager";
 import DevToolManager from "../core/DevToolManager";
 
 export function AvailableTools() {
-  const [selectedCategory, setSelectedCategory] = useState<string>("all");
+  const { categoryName } = useParams();
+  const categories = CategoryManager.getCategories();
+  const [selectedCategory, setSelectedCategory] = useState<string>(() =>
+    categoryName && categories.some((cat) => cat.id === categoryName) ? categoryName : "all",
+  );
   const [sortBy, setSortBy] = useState<string>("most-used");
   const [query, setQuery] = useState("");
-
-  const categories = CategoryManager.getCategories();
 
   const sortOptions = [
     { id: "most-used", label: "Most Popular", icon: TrendingUp },
@@ -129,6 +132,33 @@ export function AvailableTools() {
             </span>
           </div>
           <div style={{ display: "flex", gap: "var(--dt-space-2)", flexWrap: "wrap" }}>
+            <button
+              type="button"
+              onClick={() => setSelectedCategory("all")}
+              style={{
+                minHeight: "40px",
+                padding: "var(--dt-space-2) var(--dt-space-4)",
+                backgroundColor:
+                  selectedCategory === "all"
+                    ? "var(--dt-accent-primary)"
+                    : "var(--dt-bg-secondary)",
+                color: selectedCategory === "all" ? "white" : "var(--dt-text-secondary)",
+                border:
+                  selectedCategory === "all"
+                    ? "1px solid var(--dt-accent-primary)"
+                    : "1px solid var(--dt-border-primary)",
+                borderRadius: "var(--dt-radius-md)",
+                fontSize: "var(--dt-text-sm)",
+                fontWeight: "var(--dt-font-medium)",
+                cursor: "pointer",
+                transition: "all var(--dt-transition-fast)",
+              }}
+            >
+              All Tools
+              <span style={{ marginLeft: "var(--dt-space-2)", opacity: 0.75, fontSize: "var(--dt-text-xs)" }}>
+                ({DevToolManager.getToolsByCategoryId("all").length})
+              </span>
+            </button>
             {categories.map((cat) => (
               <button
                 key={cat.id}

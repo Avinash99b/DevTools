@@ -41,7 +41,7 @@ export function HomePage() {
             return (
               <Link
                 key={category.name}
-                to="/available-tools"
+                to={`/available-tools/${category.id}`}
                 style={{
                   padding: "clamp(var(--dt-space-4), 2vw, var(--dt-space-6))",
                   backgroundColor: "var(--dt-bg-secondary)",
