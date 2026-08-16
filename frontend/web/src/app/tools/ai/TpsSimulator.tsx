@@ -13,6 +13,7 @@ import {
 import { registerDevTool } from "../../core/DevToolManager";
 import { ToolCategories } from "../../core/CategoryManager";
 import { useIsMobile } from "../../components/ui/use-mobile";
+import { useAvailableHeight } from "../../components/ui/use-available-height";
 
 const MODELS = [
   "gpt-4o",
@@ -30,6 +31,7 @@ const WORDS = CORPUS.split(/\s+/);
 
 function TpsSimulator() {
   const isMobile = useIsMobile();
+  const availableHeight = useAvailableHeight();
 
   const [model, setModel] = useState(MODELS[0]);
   const [tps, setTps] = useState(40);
@@ -120,8 +122,18 @@ function TpsSimulator() {
   );
 
   return (
-    <div style={{ padding: "var(--dt-space-6)", height: "100%", boxSizing: "border-box" }}>
-      <div style={{ marginBottom: "var(--dt-space-5)" }}>
+    <div
+      style={{
+        padding: "var(--dt-space-6)",
+        height: isMobile ? "auto" : availableHeight ? `${availableHeight}px` : "calc(100dvh - 64px)",
+        minHeight: 0,
+        boxSizing: "border-box",
+        display: "flex",
+        flexDirection: "column",
+        overflowY: "auto",
+      }}
+    >
+      <div style={{ marginBottom: "var(--dt-space-5)", flexShrink: 0 }}>
         <Link
           to="/"
           style={{
@@ -144,6 +156,7 @@ function TpsSimulator() {
           gap: "var(--dt-space-3)",
           flexWrap: "wrap",
           marginBottom: "var(--dt-space-5)",
+          flexShrink: 0,
         }}
       >
         <div style={{ flex: 1, minWidth: 0 }}>
@@ -192,8 +205,9 @@ function TpsSimulator() {
           display: "grid",
           gridTemplateColumns: isMobile ? "1fr" : "minmax(280px, 360px) 1fr",
           gap: "var(--dt-space-5)",
-          height: isMobile ? "auto" : "calc(100dvh - 240px)",
-          minHeight: "460px",
+          flex: isMobile ? "0 0 auto" : "1 0 0%",
+          minHeight: isMobile ? "auto" : "460px",
+          overflow: "hidden",
         }}
       >
         <div

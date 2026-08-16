@@ -4,6 +4,8 @@ import { marked } from "marked";
 import {
   ArrowLeft,
   Bot,
+  Gauge,
+  Hash,
   Loader2,
   MessageSquare,
   Plus,
@@ -12,12 +14,15 @@ import {
   Send,
   Shield,
   Square,
+  Timer,
   Trash2,
   User,
+  X,
 } from "lucide-react";
 import { registerDevTool } from "../../core/DevToolManager";
 import { ToolCategories } from "../../core/CategoryManager";
 import { useIsMobile } from "../../components/ui/use-mobile";
+import { useAvailableHeight } from "../../components/ui/use-available-height";
 
 const COOKIE_PREFIX = "dt_ai_";
 const ENDPOINT_COOKIE = COOKIE_PREFIX + "endpoint";
@@ -43,6 +48,15 @@ interface ModelInfo {
   object?: string;
   created?: number;
   owned_by?: string;
+}
+
+interface BenchmarkResult {
+  model: string;
+  totalMs: number;
+  ttftMs: number;
+  tokens: number;
+  tps: number;
+  source: "usage" | "chunks";
 }
 
 function setCookie(name: string, value: string, days = 365) {
@@ -122,13 +136,18 @@ async function fetchModels(endpoint: string, token: string): Promise<ModelInfo[]
   return data.sort((a, b) => a.id.localeCompare(b.id));
 }
 
-async function streamCompletion(
+function nowMs() {
+  return performance.now();
+}
+
+const BENCHMARK_PROMPT =
+  "You are being benchmarked. Generate a long, coherent essay of roughly 400 words about the history of computing. Write naturally and do not stop early.";
+
+async function streamSSE(
   endpoint: string,
   token: string,
-  model: string,
-  messages: ChatMessage[],
-  temperature: number,
-  onDelta: (chunk: string) => void,
+  body: Record<string, unknown>,
+  onPayload: (payload: Record<string, unknown>) => void,
   signal?: AbortSignal,
 ) {
   const res = await fetch(endpoint + "/chat/completions", {
@@ -137,20 +156,15 @@ async function streamCompletion(
       "Content-Type": "application/json",
       Authorization: `Bearer ${token}`,
     },
-    body: JSON.stringify({
-      model,
-      messages: messages.map((m) => ({ role: m.role, content: m.content })),
-      stream: true,
-      temperature,
-    }),
+    body: JSON.stringify(body),
     signal,
   });
 
   if (!res.ok) {
     let message = `Request failed (${res.status})`;
     try {
-      const body = await res.json();
-      message = body?.error?.message || message;
+      const parsed = await res.json();
+      message = (parsed as { error?: { message?: string } })?.error?.message || message;
     } catch {
       /* ignore */
     }
@@ -173,11 +187,9 @@ async function streamCompletion(
       const trimmed = line.trim();
       if (!trimmed.startsWith("data:")) continue;
       const payload = trimmed.slice(5).trim();
-      if (payload === "[DONE]") return;
+      if (payload === "[DONE]") continue;
       try {
-        const parsed = JSON.parse(payload);
-        const delta = parsed?.choices?.[0]?.delta?.content;
-        if (typeof delta === "string") onDelta(delta);
+        onPayload(JSON.parse(payload) as Record<string, unknown>);
       } catch {
         /* partial chunk */
       }
@@ -211,10 +223,13 @@ function MarkdownContent({ content }: { content: string }) {
 
 function OpenAIPlayground() {
   const isMobile = useIsMobile();
+  const availableHeight = useAvailableHeight();
 
   const [endpoint, setEndpoint] = useState(() => getCookie(ENDPOINT_COOKIE));
   const [token, setToken] = useState(() => getCookie(TOKEN_COOKIE));
-  const [status, setStatus] = useState<"idle" | "connecting" | "connected" | "error">("idle");
+  const [status, setStatus] = useState<"idle" | "connecting" | "connected" | "error">(() =>
+    getCookie(ENDPOINT_COOKIE) && getCookie(TOKEN_COOKIE) ? "connecting" : "idle",
+  );
   const [statusMessage, setStatusMessage] = useState("");
   const [connectedEndpoint, setConnectedEndpoint] = useState("");
   const [connectedToken, setConnectedToken] = useState("");
@@ -235,20 +250,37 @@ function OpenAIPlayground() {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
 
+  const [isBenchmarking, setIsBenchmarking] = useState(false);
+  const [benchmarkResult, setBenchmarkResult] = useState<BenchmarkResult | null>(null);
+  const [benchmarkPrompt, setBenchmarkPrompt] = useState("");
+  const [benchmarkOutput, setBenchmarkOutput] = useState("");
+
   const abortRef = useRef<AbortController | null>(null);
+  const benchmarkAbortRef = useRef<AbortController | null>(null);
+  const benchmarkOutputRef = useRef("");
+  const autoConnectDoneRef = useRef(false);
   const streamTextRef = useRef("");
-  const messagesEndRef = useRef<HTMLDivElement | null>(null);
+  const messagesContainerRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
-    if (messagesEndRef.current) {
-      messagesEndRef.current.scrollIntoView({ behavior: "smooth", block: "end" });
-    }
-  }, [messages, streamText]);
+    const el = messagesContainerRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [messages, streamText, benchmarkOutput, isBenchmarking, benchmarkResult]);
 
-  async function connect() {
-    const ep = endpoint.trim().replace(/\/+$/, "");
-    const tk = token.trim();
-    if (!ep || !tk) {
+  useEffect(() => {
+    if (autoConnectDoneRef.current) return;
+    autoConnectDoneRef.current = true;
+    const savedEndpoint = getCookie(ENDPOINT_COOKIE);
+    const savedToken = getCookie(TOKEN_COOKIE);
+    if (savedEndpoint && savedToken) {
+      void connectWith(savedEndpoint, savedToken);
+    }
+  }, []);
+
+  async function connectWith(ep: string, tk: string) {
+    const cleanEp = ep.trim().replace(/\/+$/, "");
+    const cleanTk = tk.trim();
+    if (!cleanEp || !cleanTk) {
       setStatus("error");
       setStatusMessage("Both endpoint URL and API key are required.");
       return;
@@ -256,12 +288,12 @@ function OpenAIPlayground() {
     setStatus("connecting");
     setStatusMessage("Contacting endpoint...");
     try {
-      const data = await fetchModels(ep, tk);
+      const data = await fetchModels(cleanEp, cleanTk);
       setModels(data);
-      setConnectedEndpoint(ep);
-      setConnectedToken(tk);
-      setCookie(ENDPOINT_COOKIE, ep);
-      setCookie(TOKEN_COOKIE, tk);
+      setConnectedEndpoint(cleanEp);
+      setConnectedToken(cleanTk);
+      setCookie(ENDPOINT_COOKIE, cleanEp);
+      setCookie(TOKEN_COOKIE, cleanTk);
       setStatus("connected");
       setStatusMessage(`Connected — ${data.length} model${data.length === 1 ? "" : "s"} available`);
       setError("");
@@ -274,6 +306,10 @@ function OpenAIPlayground() {
       setStatus("error");
       setStatusMessage(getErrorMessage(e));
     }
+  }
+
+  function connect() {
+    void connectWith(endpoint, token);
   }
 
   async function refreshModels() {
@@ -295,6 +331,7 @@ function OpenAIPlayground() {
 
   function startChat(model: string) {
     abortRef.current?.abort();
+    benchmarkAbortRef.current?.abort();
     setSelectedModel(model);
     setActiveChat({
       id: makeId(),
@@ -307,6 +344,11 @@ function OpenAIPlayground() {
     setStreamTextRef("");
     setError("");
     setNotice("");
+    setIsBenchmarking(false);
+    setBenchmarkResult(null);
+    setBenchmarkPrompt("");
+    setBenchmarkOutput("");
+    benchmarkOutputRef.current = "";
   }
 
   function newChat() {
@@ -316,6 +358,7 @@ function OpenAIPlayground() {
 
   function loadChat(id: string) {
     abortRef.current?.abort();
+    benchmarkAbortRef.current?.abort();
     const chat = chats.find((c) => c.id === id);
     if (!chat) return;
     setActiveChat(chat);
@@ -325,6 +368,11 @@ function OpenAIPlayground() {
     setStreamTextRef("");
     setError("");
     setNotice("");
+    setIsBenchmarking(false);
+    setBenchmarkResult(null);
+    setBenchmarkPrompt("");
+    setBenchmarkOutput("");
+    benchmarkOutputRef.current = "";
   }
 
   function saveCurrentChat() {
@@ -371,7 +419,7 @@ function OpenAIPlayground() {
 
   async function sendMessage() {
     const text = input.trim();
-    if (!text || !activeChat || !selectedModel || !connectedEndpoint || isStreaming) return;
+    if (!text || !activeChat || !selectedModel || !connectedEndpoint || isStreaming || isBenchmarking) return;
 
     const userMessage: ChatMessage = { role: "user", content: text };
     const history = [...messages, userMessage];
@@ -387,22 +435,31 @@ function OpenAIPlayground() {
     setIsStreaming(true);
 
     try {
-      await streamCompletion(
+      await streamSSE(
         connectedEndpoint,
         connectedToken,
-        selectedModel,
-        history,
-        temperature,
-        (chunk) => {
-          setStreamTextRef(streamTextRef.current + chunk);
-          setStreamText(streamTextRef.current);
+        {
+          model: selectedModel,
+          messages: history.map((m) => ({ role: m.role, content: m.content })),
+          stream: true,
+          temperature,
+        },
+        (payload) => {
+          const choices = payload.choices as Array<{ delta?: { content?: string } }> | undefined;
+          const delta = choices?.[0]?.delta?.content;
+          if (typeof delta === "string") {
+            streamTextRef.current += delta;
+            setStreamText(streamTextRef.current);
+          }
         },
         controller.signal,
       );
-      setMessages((prev) => [...prev, { role: "assistant", content: streamTextRef.current }]);
+      const assistantContent = streamTextRef.current;
+      setMessages((prev) => [...prev, { role: "assistant", content: assistantContent }]);
     } catch (e: unknown) {
-      if (getErrorMessage(e) === "AbortError" || (e instanceof Error && e.name === "AbortError")) {
-        setMessages((prev) => [...prev, { role: "assistant", content: streamTextRef.current }]);
+      if (e instanceof Error && e.name === "AbortError") {
+        const assistantContent = streamTextRef.current;
+        setMessages((prev) => [...prev, { role: "assistant", content: assistantContent }]);
       } else {
         setError(getErrorMessage(e));
       }
@@ -416,6 +473,74 @@ function OpenAIPlayground() {
 
   function stopStreaming() {
     abortRef.current?.abort();
+  }
+
+  async function runBenchmark() {
+    if (!connectedEndpoint || !connectedToken || !selectedModel || isStreaming || isBenchmarking) return;
+    setIsBenchmarking(true);
+    setBenchmarkResult(null);
+    setBenchmarkPrompt(BENCHMARK_PROMPT);
+    setBenchmarkOutput("");
+    benchmarkOutputRef.current = "";
+    setError("");
+    setNotice("");
+
+    const controller = new AbortController();
+    benchmarkAbortRef.current = controller;
+    const start = nowMs();
+    let firstTokenMs = 0;
+    let chunkTokens = 0;
+    let usageTokens = 0;
+
+    try {
+      await streamSSE(
+        connectedEndpoint,
+        connectedToken,
+        {
+          model: selectedModel,
+          messages: [{ role: "user", content: BENCHMARK_PROMPT }],
+          stream: true,
+          temperature: 0.7,
+          max_tokens: 512,
+          stream_options: { include_usage: true },
+        },
+        (payload) => {
+          const choices = payload.choices as Array<{ delta?: { content?: string } }> | undefined;
+          const delta = choices?.[0]?.delta?.content;
+          if (typeof delta === "string" && delta.length > 0) {
+            if (firstTokenMs === 0) firstTokenMs = nowMs() - start;
+            chunkTokens += 1;
+            benchmarkOutputRef.current += delta;
+            setBenchmarkOutput(benchmarkOutputRef.current);
+          }
+          const usage = payload.usage as { completion_tokens?: number } | undefined;
+          if (usage?.completion_tokens) usageTokens = usage.completion_tokens;
+        },
+        controller.signal,
+      );
+
+      const totalMs = Math.max(1, nowMs() - start);
+      const tokens = usageTokens > 0 ? usageTokens : chunkTokens;
+      setBenchmarkResult({
+        model: selectedModel,
+        totalMs,
+        ttftMs: firstTokenMs || totalMs,
+        tokens,
+        tps: tokens / (totalMs / 1000),
+        source: usageTokens > 0 ? "usage" : "chunks",
+      });
+    } catch (e: unknown) {
+      if (!(e instanceof Error && e.name === "AbortError")) {
+        setError("Benchmark failed: " + getErrorMessage(e));
+      }
+    } finally {
+      setIsBenchmarking(false);
+      benchmarkAbortRef.current = null;
+    }
+  }
+
+  function stopBenchmark() {
+    benchmarkAbortRef.current?.abort();
   }
 
   const statusColor =
@@ -768,6 +893,39 @@ function OpenAIPlayground() {
 
           <button
             type="button"
+            onClick={isBenchmarking ? stopBenchmark : runBenchmark}
+            disabled={!selectedModel || isStreaming}
+            title={isBenchmarking ? "Stop benchmark" : "Benchmark output TPS"}
+            aria-label={isBenchmarking ? "Stop benchmark" : "Benchmark output TPS"}
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: "var(--dt-space-1)",
+              minHeight: "34px",
+              padding: "0 var(--dt-space-2)",
+              backgroundColor: isBenchmarking ? "rgba(239, 68, 68, 0.15)" : "rgba(16, 185, 129, 0.15)",
+              border: "1px solid " + (isBenchmarking ? "var(--dt-accent-error)" : "var(--dt-accent-success)"),
+              borderRadius: "var(--dt-radius-md)",
+              color: isBenchmarking ? "var(--dt-accent-error)" : "var(--dt-accent-success)",
+              fontSize: "var(--dt-text-xs)",
+              fontWeight: "var(--dt-font-medium)",
+              cursor: selectedModel && !isStreaming ? "pointer" : "not-allowed",
+              opacity: selectedModel && !isStreaming ? 1 : 0.5,
+            }}
+          >
+            {isBenchmarking ? (
+              <>
+                <Loader2 size={14} style={{ animation: "spin 1s linear infinite" }} /> Stop
+              </>
+            ) : (
+              <>
+                <Gauge size={14} /> Benchmark
+              </>
+            )}
+          </button>
+
+          <button
+            type="button"
             onClick={newChat}
             disabled={!selectedModel}
             title="New chat"
@@ -838,6 +996,7 @@ function OpenAIPlayground() {
       ) : (
         <>
           <div
+            ref={messagesContainerRef}
             style={{
               flex: 1,
               overflowY: "auto",
@@ -847,6 +1006,212 @@ function OpenAIPlayground() {
               gap: "var(--dt-space-4)",
             }}
           >
+            {(isBenchmarking || benchmarkResult || benchmarkPrompt) && (
+              <div
+                style={{
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: "var(--dt-space-4)",
+                  padding: "var(--dt-space-4)",
+                  backgroundColor: "var(--dt-bg-tertiary)",
+                  border: "1px solid var(--dt-border-secondary)",
+                  borderRadius: "var(--dt-radius-lg)",
+                }}
+              >
+                <div style={{ display: "flex", alignItems: "center", gap: "var(--dt-space-2)" }}>
+                  <Gauge size={16} color={isBenchmarking ? "var(--dt-accent-primary)" : "var(--dt-accent-success)"} />
+                  <span style={{ fontSize: "var(--dt-text-sm)", fontWeight: "var(--dt-font-semibold)", color: "var(--dt-text-primary)" }}>
+                    TPS Benchmark
+                  </span>
+                  <span
+                    style={{
+                      fontFamily: "var(--dt-font-mono)",
+                      fontSize: "var(--dt-text-xs)",
+                      padding: "var(--dt-space-1) var(--dt-space-2)",
+                      backgroundColor: "rgba(99, 102, 241, 0.1)",
+                      border: "1px solid var(--dt-accent-primary)",
+                      color: "var(--dt-accent-primary)",
+                      borderRadius: "var(--dt-radius-full)",
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
+                      maxWidth: "220px",
+                    }}
+                  >
+                    {selectedModel}
+                  </span>
+                  <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: "var(--dt-space-2)" }}>
+                    {isBenchmarking ? (
+                      <button
+                        type="button"
+                        onClick={stopBenchmark}
+                        title="Stop benchmark"
+                        aria-label="Stop benchmark"
+                        style={{
+                          display: "inline-flex",
+                          alignItems: "center",
+                          gap: "var(--dt-space-1)",
+                          minHeight: "32px",
+                          padding: "0 var(--dt-space-3)",
+                          backgroundColor: "rgba(239, 68, 68, 0.15)",
+                          border: "1px solid var(--dt-accent-error)",
+                          borderRadius: "var(--dt-radius-md)",
+                          color: "var(--dt-accent-error)",
+                          fontSize: "var(--dt-text-xs)",
+                          fontWeight: "var(--dt-font-medium)",
+                          cursor: "pointer",
+                        }}
+                      >
+                        <X size={14} /> Stop
+                      </button>
+                    ) : (
+                      benchmarkResult && (
+                        <button
+                          type="button"
+                          onClick={runBenchmark}
+                          title="Run benchmark again"
+                          aria-label="Run benchmark again"
+                          style={{
+                            display: "inline-flex",
+                            alignItems: "center",
+                            gap: "var(--dt-space-1)",
+                            minHeight: "32px",
+                            padding: "0 var(--dt-space-3)",
+                            backgroundColor: "rgba(16, 185, 129, 0.15)",
+                            border: "1px solid var(--dt-accent-success)",
+                            borderRadius: "var(--dt-radius-md)",
+                            color: "var(--dt-accent-success)",
+                            fontSize: "var(--dt-text-xs)",
+                            fontWeight: "var(--dt-font-medium)",
+                            cursor: "pointer",
+                          }}
+                        >
+                          <RefreshCw size={14} /> Run again
+                        </button>
+                      )
+                    )}
+                  </div>
+                </div>
+
+                <div style={{ display: "flex", justifyContent: "flex-end", gap: "var(--dt-space-2)" }}>
+                  <div
+                    style={{
+                      maxWidth: "82%",
+                      padding: "var(--dt-space-3) var(--dt-space-4)",
+                      backgroundColor: "rgba(99, 102, 241, 0.15)",
+                      border: "1px solid rgba(99, 102, 241, 0.4)",
+                      borderRadius: "var(--dt-radius-lg) var(--dt-radius-lg) var(--dt-radius-sm) var(--dt-radius-lg)",
+                      color: "var(--dt-text-primary)",
+                      fontSize: "var(--dt-text-sm)",
+                      whiteSpace: "pre-wrap",
+                      wordBreak: "break-word",
+                      lineHeight: "var(--dt-leading-relaxed)",
+                    }}
+                  >
+                    {benchmarkPrompt}
+                  </div>
+                  <div
+                    style={{
+                      width: "28px",
+                      height: "28px",
+                      flexShrink: 0,
+                      borderRadius: "50%",
+                      backgroundColor: "var(--dt-accent-primary)",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                    }}
+                  >
+                    <User size={14} color="white" />
+                  </div>
+                </div>
+
+                <div style={{ display: "flex", gap: "var(--dt-space-2)", alignItems: "flex-start" }}>
+                  <div
+                    style={{
+                      width: "28px",
+                      height: "28px",
+                      flexShrink: 0,
+                      borderRadius: "50%",
+                      backgroundColor: "var(--dt-bg-elevated)",
+                      border: "1px solid var(--dt-border-secondary)",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                    }}
+                  >
+                    <Bot size={14} color="var(--dt-accent-primary)" />
+                  </div>
+                  <div
+                    style={{
+                      flex: 1,
+                      minWidth: 0,
+                      padding: "var(--dt-space-3) var(--dt-space-4)",
+                      backgroundColor: "var(--dt-bg-secondary)",
+                      border: "1px solid var(--dt-border-primary)",
+                      borderRadius: "var(--dt-radius-lg) var(--dt-radius-lg) var(--dt-radius-lg) var(--dt-radius-sm)",
+                    }}
+                  >
+                    {benchmarkOutput ? (
+                      <MarkdownContent content={benchmarkOutput} />
+                    ) : isBenchmarking ? (
+                      <span style={{ display: "inline-flex", gap: 4, padding: "4px 0" }}>
+                        <span className="stream-dot" style={{ width: 6, height: 6, borderRadius: "50%", backgroundColor: "var(--dt-text-tertiary)" }} />
+                        <span className="stream-dot" style={{ width: 6, height: 6, borderRadius: "50%", backgroundColor: "var(--dt-text-tertiary)" }} />
+                        <span className="stream-dot" style={{ width: 6, height: 6, borderRadius: "50%", backgroundColor: "var(--dt-text-tertiary)" }} />
+                      </span>
+                    ) : (
+                      <span style={{ fontSize: "var(--dt-text-xs)", color: "var(--dt-text-tertiary)" }}>No output captured.</span>
+                    )}
+                  </div>
+                </div>
+
+                {benchmarkResult && (
+                  <>
+                    <div
+                      style={{
+                        display: "grid",
+                        gridTemplateColumns: isMobile ? "1fr 1fr" : "repeat(4, 1fr)",
+                        gap: "var(--dt-space-2)",
+                      }}
+                    >
+                      <div style={{ padding: "var(--dt-space-3)", backgroundColor: "var(--dt-bg-secondary)", border: "1px solid var(--dt-border-primary)", borderRadius: "var(--dt-radius-md)" }}>
+                        <div style={{ fontSize: "var(--dt-text-xs)", color: "var(--dt-text-tertiary)", display: "flex", alignItems: "center", gap: 4 }}>
+                          <Hash size={12} /> Tokens
+                        </div>
+                        <div style={{ fontSize: "var(--dt-text-lg)", fontWeight: "var(--dt-font-semibold)", color: "var(--dt-text-primary)", fontFamily: "var(--dt-font-mono)" }}>
+                          {benchmarkResult.tokens}
+                        </div>
+                      </div>
+                      <div style={{ padding: "var(--dt-space-3)", backgroundColor: "var(--dt-bg-secondary)", border: "1px solid var(--dt-border-primary)", borderRadius: "var(--dt-radius-md)" }}>
+                        <div style={{ fontSize: "var(--dt-text-xs)", color: "var(--dt-text-tertiary)" }}>Output TPS</div>
+                        <div style={{ fontSize: "var(--dt-text-lg)", fontWeight: "var(--dt-font-semibold)", color: "var(--dt-accent-success)", fontFamily: "var(--dt-font-mono)" }}>
+                          {benchmarkResult.tps.toFixed(1)}
+                        </div>
+                      </div>
+                      <div style={{ padding: "var(--dt-space-3)", backgroundColor: "var(--dt-bg-secondary)", border: "1px solid var(--dt-border-primary)", borderRadius: "var(--dt-radius-md)" }}>
+                        <div style={{ fontSize: "var(--dt-text-xs)", color: "var(--dt-text-tertiary)", display: "flex", alignItems: "center", gap: 4 }}>
+                          <Timer size={12} /> Total
+                        </div>
+                        <div style={{ fontSize: "var(--dt-text-lg)", fontWeight: "var(--dt-font-semibold)", color: "var(--dt-text-primary)", fontFamily: "var(--dt-font-mono)" }}>
+                          {(benchmarkResult.totalMs / 1000).toFixed(2)}s
+                        </div>
+                      </div>
+                      <div style={{ padding: "var(--dt-space-3)", backgroundColor: "var(--dt-bg-secondary)", border: "1px solid var(--dt-border-primary)", borderRadius: "var(--dt-radius-md)" }}>
+                        <div style={{ fontSize: "var(--dt-text-xs)", color: "var(--dt-text-tertiary)" }}>TTFT</div>
+                        <div style={{ fontSize: "var(--dt-text-lg)", fontWeight: "var(--dt-font-semibold)", color: "var(--dt-text-primary)", fontFamily: "var(--dt-font-mono)" }}>
+                          {benchmarkResult.ttftMs.toFixed(0)}ms
+                        </div>
+                      </div>
+                    </div>
+                    <div style={{ fontSize: "var(--dt-text-xs)", color: "var(--dt-text-tertiary)" }}>
+                      Token count from {benchmarkResult.source === "usage" ? "server-reported usage" : "streamed chunks (usage not reported by this endpoint)"}.
+                    </div>
+                  </>
+                )}
+              </div>
+            )}
+
             {messages.map((msg, index) =>
               msg.role === "user" ? (
                 <div key={index} style={{ display: "flex", justifyContent: "flex-end", gap: "var(--dt-space-2)" }}>
@@ -971,8 +1336,7 @@ function OpenAIPlayground() {
               </div>
             )}
 
-            <div ref={messagesEndRef} />
-          </div>
+            </div>
 
           <div
             style={{
@@ -1089,17 +1453,18 @@ function OpenAIPlayground() {
 
   const workspace = isMobile ? (
     <div style={{ display: "flex", flexDirection: "column", gap: "var(--dt-space-4)" }}>
-      {modelsPanel}
-      <div style={{ minHeight: "520px", display: "flex" }}>{chatPanel}</div>
+      <div style={{ height: "300px", display: "flex", flexShrink: 0 }}>{modelsPanel}</div>
+      <div style={{ height: "min(72dvh, 640px)", display: "flex", flexShrink: 0 }}>{chatPanel}</div>
     </div>
   ) : (
     <div
       style={{
+        flex: "1 0 0%",
+        minHeight: "380px",
         display: "grid",
         gridTemplateColumns: "minmax(300px, 360px) 1fr",
         gap: "var(--dt-space-5)",
-        height: "calc(100dvh - 240px)",
-        minHeight: "480px",
+        overflow: "hidden",
       }}
     >
       {modelsPanel}
@@ -1108,8 +1473,18 @@ function OpenAIPlayground() {
   );
 
   return (
-    <div style={{ padding: "var(--dt-space-6)", height: "100%", boxSizing: "border-box" }}>
-      <div style={{ marginBottom: "var(--dt-space-5)" }}>
+    <div
+      style={{
+        padding: "var(--dt-space-6)",
+        height: isMobile ? "auto" : availableHeight ? `${availableHeight}px` : "calc(100dvh - 64px)",
+        minHeight: 0,
+        boxSizing: "border-box",
+        display: "flex",
+        flexDirection: "column",
+        overflowY: "auto",
+      }}
+    >
+      <div style={{ marginBottom: "var(--dt-space-5)", flexShrink: 0 }}>
         <Link
           to="/"
           style={{
@@ -1132,6 +1507,7 @@ function OpenAIPlayground() {
           gap: "var(--dt-space-3)",
           flexWrap: "wrap",
           marginBottom: "var(--dt-space-5)",
+          flexShrink: 0,
         }}
       >
         <div style={{ flex: 1, minWidth: 0 }}>
@@ -1173,6 +1549,7 @@ function OpenAIPlayground() {
           borderRadius: "var(--dt-radius-lg)",
           padding: "var(--dt-space-4) var(--dt-space-5)",
           marginBottom: "var(--dt-space-5)",
+          flexShrink: 0,
         }}
       >
         <div style={{ display: "flex", alignItems: "center", gap: "var(--dt-space-2)", marginBottom: "var(--dt-space-3)" }}>
