@@ -6,6 +6,7 @@ import {
   Bot,
   Gauge,
   Hash,
+  ImagePlus,
   Loader2,
   MessageSquare,
   Plus,
@@ -31,9 +32,19 @@ const CHATS_INDEX_COOKIE = COOKIE_PREFIX + "chats";
 const CHAT_COOKIE = (id: string) => COOKIE_PREFIX + "chat_" + id;
 const MAX_COOKIE_CHARS = 3500;
 
+type ContentPart =
+  | { type: "text"; text: string }
+  | { type: "image_url"; image_url: { url: string; detail?: "auto" | "low" | "high" } };
+
 interface ChatMessage {
   role: "user" | "assistant";
-  content: string;
+  content: string | ContentPart[];
+}
+
+interface Attachment {
+  id: string;
+  dataUrl: string;
+  name: string;
 }
 
 interface SavedChat {
@@ -102,6 +113,53 @@ function getErrorMessage(e: unknown) {
   if (e instanceof Error) return e.message;
   if (e && typeof e === "object" && "message" in e) return String((e as { message: unknown }).message);
   return "Something went wrong.";
+}
+
+const MAX_IMAGE_MB = 4;
+
+function readImageData(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result));
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(file);
+  });
+}
+
+function contentText(content: string | ContentPart[]): string {
+  if (typeof content === "string") return content;
+  return content
+    .filter((p): p is { type: "text"; text: string } => p.type === "text")
+    .map((p) => p.text)
+    .join(" ")
+    .trim();
+}
+
+function ContentParts({ parts }: { parts: ContentPart[] }) {
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: "var(--dt-space-2)" }}>
+      {parts.map((part, i) =>
+        part.type === "image_url" ? (
+          <img
+            key={i}
+            src={part.image_url.url}
+            alt="Attached image"
+            style={{
+              maxWidth: "240px",
+              maxHeight: "200px",
+              borderRadius: "var(--dt-radius-md)",
+              objectFit: "cover",
+              display: "block",
+            }}
+          />
+        ) : (
+          <span key={i} style={{ whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
+            {part.text}
+          </span>
+        ),
+      )}
+    </div>
+  );
 }
 
 function formatDate(ts?: number) {
@@ -240,6 +298,8 @@ function OpenAIPlayground() {
 
   const [temperature, setTemperature] = useState(1);
   const [input, setInput] = useState("");
+  const [attachments, setAttachments] = useState<Attachment[]>([]);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const [chats, setChats] = useState<SavedChat[]>(loadChatsFromCookies);
   const [activeChat, setActiveChat] = useState<SavedChat | null>(null);
@@ -340,6 +400,8 @@ function OpenAIPlayground() {
       messages: [],
     });
     setMessages([]);
+    setInput("");
+    setAttachments([]);
     setStreamText("");
     setStreamTextRef("");
     setError("");
@@ -364,6 +426,8 @@ function OpenAIPlayground() {
     setActiveChat(chat);
     setMessages(chat.messages);
     setSelectedModel(chat.model);
+    setInput("");
+    setAttachments([]);
     setStreamText("");
     setStreamTextRef("");
     setError("");
@@ -379,7 +443,7 @@ function OpenAIPlayground() {
     if (!activeChat) return;
     const title =
       activeChat.title === "New chat"
-        ? (messages[0]?.content || "Empty chat").slice(0, 42)
+        ? (contentText(messages[0]?.content || "") || "Image chat").slice(0, 42)
         : activeChat.title;
     const chat: SavedChat = { ...activeChat, title, messages };
     const serialized = JSON.stringify(chat);
@@ -419,12 +483,21 @@ function OpenAIPlayground() {
 
   async function sendMessage() {
     const text = input.trim();
-    if (!text || !activeChat || !selectedModel || !connectedEndpoint || isStreaming || isBenchmarking) return;
+    const hasImages = attachments.length > 0;
+    if ((!text && !hasImages) || !activeChat || !selectedModel || !connectedEndpoint || isStreaming || isBenchmarking) return;
 
-    const userMessage: ChatMessage = { role: "user", content: text };
+    const parts: ContentPart[] = [];
+    if (text) parts.push({ type: "text", text });
+    for (const attachment of attachments) {
+      parts.push({ type: "image_url", image_url: { url: attachment.dataUrl } });
+    }
+    const content: string | ContentPart[] = parts.length === 1 && parts[0].type === "text" ? parts[0].text : parts;
+
+    const userMessage: ChatMessage = { role: "user", content };
     const history = [...messages, userMessage];
     setMessages(history);
     setInput("");
+    setAttachments([]);
     setError("");
     setNotice("");
     setStreamText("");
@@ -473,6 +546,28 @@ function OpenAIPlayground() {
 
   function stopStreaming() {
     abortRef.current?.abort();
+  }
+
+  function removeAttachment(id: string) {
+    setAttachments((prev) => prev.filter((a) => a.id !== id));
+  }
+
+  async function handleImageFiles(files: FileList | null) {
+    if (!files || files.length === 0) return;
+    const images = Array.from(files).filter(
+      (f) => f.type.startsWith("image/") && f.size <= MAX_IMAGE_MB * 1024 * 1024,
+    );
+    if (images.length !== files.length) {
+      setNotice(`Only image files up to ${MAX_IMAGE_MB} MB can be attached.`);
+    }
+    const loaded = await Promise.all(
+      images.map(async (file) => ({
+        id: makeId(),
+        name: file.name,
+        dataUrl: await readImageData(file),
+      })),
+    );
+    setAttachments((prev) => [...prev, ...loaded]);
   }
 
   async function runBenchmark() {
@@ -991,7 +1086,7 @@ function OpenAIPlayground() {
           <p style={{ margin: 0, fontSize: "var(--dt-text-base)", color: "var(--dt-text-secondary)" }}>
             Select a model from the dashboard to start chatting.
           </p>
-          <p style={{ margin: 0, fontSize: "var(--dt-text-sm)" }}>Streaming responses are supported.</p>
+          <p style={{ margin: 0, fontSize: "var(--dt-text-sm)" }}>Streaming responses and image attachments are supported.</p>
         </div>
       ) : (
         <>
@@ -1229,7 +1324,7 @@ function OpenAIPlayground() {
                       lineHeight: "var(--dt-leading-relaxed)",
                     }}
                   >
-                    {msg.content}
+                    {Array.isArray(msg.content) ? <ContentParts parts={msg.content} /> : msg.content}
                   </div>
                   <div
                     style={{
@@ -1273,7 +1368,7 @@ function OpenAIPlayground() {
                       borderRadius: "var(--dt-radius-lg) var(--dt-radius-lg) var(--dt-radius-lg) var(--dt-radius-sm)",
                     }}
                   >
-                    <MarkdownContent content={msg.content} />
+                    {Array.isArray(msg.content) ? <ContentParts parts={msg.content} /> : <MarkdownContent content={msg.content} />}
                   </div>
                 </div>
               ),
@@ -1362,28 +1457,108 @@ function OpenAIPlayground() {
             <div
               style={{
                 display: "flex",
+                flexDirection: "column",
                 gap: "var(--dt-space-2)",
-                alignItems: "flex-end",
                 backgroundColor: "var(--dt-bg-tertiary)",
                 border: "1px solid var(--dt-border-primary)",
                 borderRadius: "var(--dt-radius-lg)",
                 padding: "var(--dt-space-2)",
               }}
             >
-              <textarea
-                value={input}
-                onChange={(e) => setInput(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" && !e.shiftKey) {
-                    e.preventDefault();
-                    sendMessage();
+              {attachments.length > 0 && (
+                <div style={{ display: "flex", gap: "var(--dt-space-2)", flexWrap: "wrap" }}>
+                  {attachments.map((attachment) => (
+                    <div key={attachment.id} style={{ position: "relative" }}>
+                      <img
+                        src={attachment.dataUrl}
+                        alt={attachment.name}
+                        title={attachment.name}
+                        style={{
+                          width: "48px",
+                          height: "48px",
+                          borderRadius: "var(--dt-radius-md)",
+                          objectFit: "cover",
+                          border: "1px solid var(--dt-border-primary)",
+                          display: "block",
+                        }}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => removeAttachment(attachment.id)}
+                        title={`Remove ${attachment.name}`}
+                        aria-label={`Remove ${attachment.name}`}
+                        style={{
+                          position: "absolute",
+                          top: -6,
+                          right: -6,
+                          width: "20px",
+                          height: "20px",
+                          display: "inline-flex",
+                          alignItems: "center",
+                          justifyContent: "center",
+                          backgroundColor: "var(--dt-bg-elevated)",
+                          border: "1px solid var(--dt-border-primary)",
+                          borderRadius: "50%",
+                          color: "var(--dt-text-secondary)",
+                          cursor: "pointer",
+                          padding: 0,
+                        }}
+                      >
+                        <X size={12} />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+              <div style={{ display: "flex", gap: "var(--dt-space-2)", alignItems: "flex-end" }}>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="image/*"
+                  multiple
+                  style={{ display: "none" }}
+                  onChange={(e) => {
+                    void handleImageFiles(e.target.files);
+                    e.target.value = "";
+                  }}
+                />
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={!activeChat || isStreaming}
+                  title="Attach images"
+                  aria-label="Attach images"
+                  style={{
+                    minWidth: "44px",
+                    height: "44px",
+                    display: "inline-flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    backgroundColor: "var(--dt-bg-tertiary)",
+                    border: "1px solid var(--dt-border-primary)",
+                    borderRadius: "var(--dt-radius-md)",
+                    color: "var(--dt-text-secondary)",
+                    cursor: activeChat && !isStreaming ? "pointer" : "not-allowed",
+                    opacity: activeChat && !isStreaming ? 1 : 0.5,
+                    flexShrink: 0,
+                  }}
+                >
+                  <ImagePlus size={16} />
+                </button>
+                <textarea
+                  value={input}
+                  onChange={(e) => setInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && !e.shiftKey) {
+                      e.preventDefault();
+                      sendMessage();
+                    }
+                  }}
+                  placeholder={
+                    selectedModel ? "Type a message... (Enter to send, Shift+Enter for newline)" : "Select a model to begin chatting."
                   }
-                }}
-                placeholder={
-                  selectedModel ? "Type a message... (Enter to send, Shift+Enter for newline)" : "Select a model to begin chatting."
-                }
-                rows={2}
-                disabled={!selectedModel}
+                  rows={2}
+                  disabled={!selectedModel}
                 style={{
                   flex: 1,
                   resize: "none",
@@ -1424,7 +1599,7 @@ function OpenAIPlayground() {
                 <button
                   type="button"
                   onClick={sendMessage}
-                  disabled={!selectedModel || !input.trim() || !activeChat}
+                  disabled={!selectedModel || (!input.trim() && attachments.length === 0) || !activeChat}
                   title="Send"
                   aria-label="Send"
                   style={{
@@ -1438,12 +1613,13 @@ function OpenAIPlayground() {
                     border: "none",
                     borderRadius: "var(--dt-radius-md)",
                     cursor: "pointer",
-                    opacity: !selectedModel || !input.trim() || !activeChat ? 0.5 : 1,
+                    opacity: !selectedModel || (!input.trim() && attachments.length === 0) || !activeChat ? 0.5 : 1,
                   }}
                 >
                   <Send size={16} />
                 </button>
               )}
+              </div>
             </div>
           </div>
         </>
