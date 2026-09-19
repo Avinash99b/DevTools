@@ -4,9 +4,12 @@ import { marked } from "marked";
 import {
   ArrowLeft,
   Bot,
+  ChevronDown,
+  ChevronUp,
   Gauge,
   Hash,
   ImagePlus,
+  Layers,
   Loader2,
   MessageSquare,
   Plus,
@@ -14,6 +17,7 @@ import {
   Save,
   Send,
   Shield,
+  SlidersHorizontal,
   Square,
   Timer,
   Trash2,
@@ -28,9 +32,18 @@ import { useAvailableHeight } from "../../components/ui/use-available-height";
 const COOKIE_PREFIX = "dt_ai_";
 const ENDPOINT_COOKIE = COOKIE_PREFIX + "endpoint";
 const TOKEN_COOKIE = COOKIE_PREFIX + "token";
+const ENDPOINT_HEADERS_COOKIE = COOKIE_PREFIX + "endpoint_headers";
+const MODEL_HEADERS_COOKIE = COOKIE_PREFIX + "model_headers";
 const CHATS_INDEX_COOKIE = COOKIE_PREFIX + "chats";
 const CHAT_COOKIE = (id: string) => COOKIE_PREFIX + "chat_" + id;
 const MAX_COOKIE_CHARS = 3500;
+
+export interface CustomHeader {
+  id: string;
+  key: string;
+  value: string;
+  enabled: boolean;
+}
 
 type ContentPart =
   | { type: "text"; text: string }
@@ -86,6 +99,92 @@ function deleteCookie(name: string) {
 function makeId() {
   if (typeof crypto !== "undefined" && crypto.randomUUID) return crypto.randomUUID();
   return "chat_" + Math.random().toString(36).slice(2) + Date.now().toString(36);
+}
+
+function loadHeadersFromCookie(cookieName: string): CustomHeader[] {
+  const raw = getCookie(cookieName);
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed)) {
+      return parsed
+        .filter((item): item is CustomHeader => item && typeof item === "object" && typeof item.key === "string")
+        .map((item) => ({
+          id: item.id || makeId(),
+          key: item.key || "",
+          value: typeof item.value === "string" ? item.value : "",
+          enabled: item.enabled !== false,
+        }));
+    }
+  } catch {
+    /* ignore */
+  }
+  return [];
+}
+
+function loadModelHeadersFromCookie(): Record<string, CustomHeader[]> {
+  const raw = getCookie(MODEL_HEADERS_COOKIE);
+  if (!raw) return {};
+  try {
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      const result: Record<string, CustomHeader[]> = {};
+      for (const [modelId, headers] of Object.entries(parsed)) {
+        if (Array.isArray(headers)) {
+          result[modelId] = headers
+            .filter((item): item is CustomHeader => item && typeof item === "object" && typeof item.key === "string")
+            .map((item) => ({
+              id: item.id || makeId(),
+              key: item.key || "",
+              value: typeof item.value === "string" ? item.value : "",
+              enabled: item.enabled !== false,
+            }));
+        }
+      }
+      return result;
+    }
+  } catch {
+    /* ignore */
+  }
+  return {};
+}
+
+function buildHeaderRecord(headers: CustomHeader[]): Record<string, string> {
+  const record: Record<string, string> = {};
+  for (const h of headers) {
+    if (h.enabled && h.key.trim()) {
+      record[h.key.trim()] = h.value;
+    }
+  }
+  return record;
+}
+
+function combineHeaders(
+  token: string,
+  endpointHeaders: CustomHeader[],
+  modelHeaders?: CustomHeader[],
+  additionalHeaders?: Record<string, string>,
+): Record<string, string> {
+  const headers: Record<string, string> = {};
+  if (token.trim()) {
+    headers["Authorization"] = `Bearer ${token.trim()}`;
+  }
+  const epRec = buildHeaderRecord(endpointHeaders);
+  for (const [k, v] of Object.entries(epRec)) {
+    headers[k] = v;
+  }
+  if (modelHeaders) {
+    const modelRec = buildHeaderRecord(modelHeaders);
+    for (const [k, v] of Object.entries(modelRec)) {
+      headers[k] = v;
+    }
+  }
+  if (additionalHeaders) {
+    for (const [k, v] of Object.entries(additionalHeaders)) {
+      headers[k] = v;
+    }
+  }
+  return headers;
 }
 
 function loadChatsFromCookies(): SavedChat[] {
@@ -175,9 +274,10 @@ function escapeHtml(str: string) {
   return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
-async function fetchModels(endpoint: string, token: string): Promise<ModelInfo[]> {
+async function fetchModels(endpoint: string, token: string, customHeaders?: CustomHeader[]): Promise<ModelInfo[]> {
+  const headers = combineHeaders(token, customHeaders || []);
   const res = await fetch(endpoint + "/models", {
-    headers: { Authorization: `Bearer ${token}` },
+    headers,
   });
   if (!res.ok) {
     let message = `Request failed (${res.status})`;
@@ -207,13 +307,15 @@ async function streamSSE(
   body: Record<string, unknown>,
   onPayload: (payload: Record<string, unknown>) => void,
   signal?: AbortSignal,
+  endpointHeaders?: CustomHeader[],
+  modelHeaders?: CustomHeader[],
 ) {
+  const headers = combineHeaders(token, endpointHeaders || [], modelHeaders, {
+    "Content-Type": "application/json",
+  });
   const res = await fetch(endpoint + "/chat/completions", {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${token}`,
-    },
+    headers,
     body: JSON.stringify(body),
     signal,
   });
@@ -279,18 +381,316 @@ function MarkdownContent({ content }: { content: string }) {
   );
 }
 
+function HeadersEditor({
+  title,
+  subtitle,
+  headers,
+  onChange,
+  onClose,
+  inheritedHeaders,
+}: {
+  title: string;
+  subtitle?: string;
+  headers: CustomHeader[];
+  onChange: (headers: CustomHeader[]) => void;
+  onClose?: () => void;
+  inheritedHeaders?: CustomHeader[];
+}) {
+  const addHeader = (key = "", value = "") => {
+    onChange([
+      ...headers,
+      { id: makeId(), key, value, enabled: true },
+    ]);
+  };
+
+  const updateHeader = (id: string, partial: Partial<CustomHeader>) => {
+    onChange(
+      headers.map((h) => (h.id === id ? { ...h, ...partial } : h)),
+    );
+  };
+
+  const removeHeader = (id: string) => {
+    onChange(headers.filter((h) => h.id !== id));
+  };
+
+  const activeCount = headers.filter((h) => h.enabled && h.key.trim()).length;
+  const commonPresets = [
+    { label: "HTTP-Referer", key: "HTTP-Referer", placeholder: "https://your-app.com" },
+    { label: "X-Title", key: "X-Title", placeholder: "My App Title" },
+    { label: "anthropic-version", key: "anthropic-version", placeholder: "2023-06-01" },
+    { label: "OpenAI-Beta", key: "OpenAI-Beta", placeholder: "assistants=v2" },
+  ];
+
+  return (
+    <div
+      style={{
+        display: "flex",
+        flexDirection: "column",
+        gap: "var(--dt-space-3)",
+        padding: "var(--dt-space-3) var(--dt-space-4)",
+        backgroundColor: "var(--dt-bg-tertiary)",
+        border: "1px solid var(--dt-border-primary)",
+        borderRadius: "var(--dt-radius-md)",
+      }}
+    >
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: "var(--dt-space-2)" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: "var(--dt-space-2)" }}>
+          <SlidersHorizontal size={14} color="var(--dt-accent-primary)" />
+          <span style={{ fontSize: "var(--dt-text-xs)", fontWeight: "var(--dt-font-semibold)", color: "var(--dt-text-primary)" }}>
+            {title}
+          </span>
+          <span
+            style={{
+              fontSize: "11px",
+              padding: "1px 6px",
+              borderRadius: "var(--dt-radius-full)",
+              backgroundColor: activeCount > 0 ? "rgba(99, 102, 241, 0.15)" : "var(--dt-bg-elevated)",
+              color: activeCount > 0 ? "var(--dt-accent-primary)" : "var(--dt-text-tertiary)",
+              fontFamily: "var(--dt-font-mono)",
+            }}
+          >
+            {activeCount} active
+          </span>
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: "var(--dt-space-2)" }}>
+          <button
+            type="button"
+            onClick={() => addHeader()}
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 4,
+              padding: "3px 8px",
+              backgroundColor: "var(--dt-bg-elevated)",
+              border: "1px solid var(--dt-border-secondary)",
+              borderRadius: "var(--dt-radius-sm)",
+              color: "var(--dt-text-primary)",
+              fontSize: "var(--dt-text-xs)",
+              cursor: "pointer",
+            }}
+          >
+            <Plus size={12} /> Add Header
+          </button>
+          {onClose && (
+            <button
+              type="button"
+              onClick={onClose}
+              title="Close headers editor"
+              aria-label="Close"
+              style={{
+                background: "transparent",
+                border: "none",
+                color: "var(--dt-text-tertiary)",
+                cursor: "pointer",
+                padding: 2,
+                display: "inline-flex",
+              }}
+            >
+              <X size={14} />
+            </button>
+          )}
+        </div>
+      </div>
+
+      {subtitle && (
+        <p style={{ margin: 0, fontSize: "var(--dt-text-xs)", color: "var(--dt-text-tertiary)", lineHeight: "var(--dt-leading-normal)" }}>
+          {subtitle}
+        </p>
+      )}
+
+      {headers.length === 0 ? (
+        <div
+          style={{
+            padding: "var(--dt-space-3)",
+            textAlign: "center",
+            color: "var(--dt-text-tertiary)",
+            fontSize: "var(--dt-text-xs)",
+            border: "1px dashed var(--dt-border-secondary)",
+            borderRadius: "var(--dt-radius-sm)",
+            display: "flex",
+            flexDirection: "column",
+            gap: "var(--dt-space-2)",
+            alignItems: "center",
+          }}
+        >
+          <span>No custom headers configured. Click "+ Add Header" or select a preset below:</span>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: "var(--dt-space-1)", justifyContent: "center" }}>
+            {commonPresets.map((preset) => (
+              <button
+                key={preset.key}
+                type="button"
+                onClick={() => addHeader(preset.key, "")}
+                style={{
+                  padding: "2px 6px",
+                  fontSize: "11px",
+                  backgroundColor: "var(--dt-bg-elevated)",
+                  border: "1px solid var(--dt-border-secondary)",
+                  borderRadius: "var(--dt-radius-sm)",
+                  color: "var(--dt-text-secondary)",
+                  cursor: "pointer",
+                  fontFamily: "var(--dt-font-mono)",
+                }}
+              >
+                + {preset.label}
+              </button>
+            ))}
+          </div>
+        </div>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: "var(--dt-space-2)" }}>
+          {headers.map((h) => (
+            <div
+              key={h.id}
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: "var(--dt-space-2)",
+                opacity: h.enabled ? 1 : 0.6,
+              }}
+            >
+              <input
+                type="checkbox"
+                checked={h.enabled}
+                onChange={(e) => updateHeader(h.id, { enabled: e.target.checked })}
+                title={h.enabled ? "Disable header" : "Enable header"}
+                style={{ cursor: "pointer", accentColor: "var(--dt-accent-primary)" }}
+              />
+              <input
+                type="text"
+                value={h.key}
+                onChange={(e) => updateHeader(h.id, { key: e.target.value })}
+                placeholder="Header Name (e.g. HTTP-Referer)"
+                spellCheck={false}
+                style={{
+                  flex: 1,
+                  boxSizing: "border-box",
+                  minHeight: "32px",
+                  padding: "4px var(--dt-space-2)",
+                  backgroundColor: "var(--dt-bg-secondary)",
+                  border: "1px solid var(--dt-border-primary)",
+                  borderRadius: "var(--dt-radius-sm)",
+                  color: "var(--dt-text-primary)",
+                  fontSize: "var(--dt-text-xs)",
+                  fontFamily: "var(--dt-font-mono)",
+                  outline: "none",
+                }}
+              />
+              <input
+                type="text"
+                value={h.value}
+                onChange={(e) => updateHeader(h.id, { value: e.target.value })}
+                placeholder="Header Value"
+                spellCheck={false}
+                style={{
+                  flex: 1.5,
+                  boxSizing: "border-box",
+                  minHeight: "32px",
+                  padding: "4px var(--dt-space-2)",
+                  backgroundColor: "var(--dt-bg-secondary)",
+                  border: "1px solid var(--dt-border-primary)",
+                  borderRadius: "var(--dt-radius-sm)",
+                  color: "var(--dt-text-primary)",
+                  fontSize: "var(--dt-text-xs)",
+                  fontFamily: "var(--dt-font-mono)",
+                  outline: "none",
+                }}
+              />
+              <button
+                type="button"
+                onClick={() => removeHeader(h.id)}
+                title="Remove header"
+                aria-label="Remove header"
+                style={{
+                  minWidth: "28px",
+                  height: "28px",
+                  display: "inline-flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  background: "transparent",
+                  border: "none",
+                  color: "var(--dt-text-tertiary)",
+                  cursor: "pointer",
+                  borderRadius: "var(--dt-radius-sm)",
+                }}
+              >
+                <Trash2 size={13} />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {inheritedHeaders && inheritedHeaders.filter((h) => h.enabled && h.key.trim()).length > 0 && (
+        <div
+          style={{
+            marginTop: "var(--dt-space-1)",
+            padding: "var(--dt-space-2) var(--dt-space-3)",
+            backgroundColor: "var(--dt-bg-secondary)",
+            border: "1px solid var(--dt-border-secondary)",
+            borderRadius: "var(--dt-radius-sm)",
+            fontSize: "11px",
+            color: "var(--dt-text-tertiary)",
+            display: "flex",
+            flexDirection: "column",
+            gap: 4,
+          }}
+        >
+          <span style={{ fontWeight: "var(--dt-font-semibold)", color: "var(--dt-text-secondary)", display: "flex", alignItems: "center", gap: 4 }}>
+            <Layers size={11} color="var(--dt-accent-primary)" /> Inherited from Endpoint ({inheritedHeaders.filter((h) => h.enabled && h.key.trim()).length}):
+          </span>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+            {inheritedHeaders
+              .filter((h) => h.enabled && h.key.trim())
+              .map((h) => {
+                const isOverridden = headers.some((mh) => mh.enabled && mh.key.trim().toLowerCase() === h.key.trim().toLowerCase());
+                return (
+                  <span
+                    key={h.id}
+                    title={isOverridden ? "Overridden by model-level header" : undefined}
+                    style={{
+                      backgroundColor: "var(--dt-bg-elevated)",
+                      padding: "2px 6px",
+                      borderRadius: "4px",
+                      fontFamily: "var(--dt-font-mono)",
+                      textDecoration: isOverridden ? "line-through" : "none",
+                      opacity: isOverridden ? 0.5 : 1,
+                    }}
+                  >
+                    {h.key}: {h.value || "(empty)"}
+                  </span>
+                );
+              })}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function OpenAIPlayground() {
   const isMobile = useIsMobile();
   const availableHeight = useAvailableHeight();
 
   const [endpoint, setEndpoint] = useState(() => getCookie(ENDPOINT_COOKIE));
   const [token, setToken] = useState(() => getCookie(TOKEN_COOKIE));
+  const [endpointHeaders, setEndpointHeaders] = useState<CustomHeader[]>(() =>
+    loadHeadersFromCookie(ENDPOINT_HEADERS_COOKIE),
+  );
+  const [modelHeadersMap, setModelHeadersMap] = useState<Record<string, CustomHeader[]>>(() =>
+    loadModelHeadersFromCookie(),
+  );
+  const [showEndpointHeaders, setShowEndpointHeaders] = useState(false);
+  const [showModelHeaders, setShowModelHeaders] = useState(false);
+
   const [status, setStatus] = useState<"idle" | "connecting" | "connected" | "error">(() =>
     getCookie(ENDPOINT_COOKIE) && getCookie(TOKEN_COOKIE) ? "connecting" : "idle",
   );
   const [statusMessage, setStatusMessage] = useState("");
   const [connectedEndpoint, setConnectedEndpoint] = useState("");
   const [connectedToken, setConnectedToken] = useState("");
+  const [connectedEndpointHeaders, setConnectedEndpointHeaders] = useState<CustomHeader[]>(() =>
+    loadHeadersFromCookie(ENDPOINT_HEADERS_COOKIE),
+  );
 
   const [models, setModels] = useState<ModelInfo[]>([]);
   const [modelsLoading, setModelsLoading] = useState(false);
@@ -322,6 +722,20 @@ function OpenAIPlayground() {
   const streamTextRef = useRef("");
   const messagesContainerRef = useRef<HTMLDivElement | null>(null);
 
+  const currentModelHeaders = selectedModel ? modelHeadersMap[selectedModel] || [] : [];
+
+  function handleEndpointHeadersChange(next: CustomHeader[]) {
+    setEndpointHeaders(next);
+    setConnectedEndpointHeaders(next);
+    setCookie(ENDPOINT_HEADERS_COOKIE, JSON.stringify(next));
+  }
+
+  function handleModelHeadersChange(modelId: string, next: CustomHeader[]) {
+    const updated = { ...modelHeadersMap, [modelId]: next };
+    setModelHeadersMap(updated);
+    setCookie(MODEL_HEADERS_COOKIE, JSON.stringify(updated));
+  }
+
   useEffect(() => {
     const el = messagesContainerRef.current;
     if (el) el.scrollTop = el.scrollHeight;
@@ -332,12 +746,13 @@ function OpenAIPlayground() {
     autoConnectDoneRef.current = true;
     const savedEndpoint = getCookie(ENDPOINT_COOKIE);
     const savedToken = getCookie(TOKEN_COOKIE);
+    const savedHeaders = loadHeadersFromCookie(ENDPOINT_HEADERS_COOKIE);
     if (savedEndpoint && savedToken) {
-      void connectWith(savedEndpoint, savedToken);
+      void connectWith(savedEndpoint, savedToken, savedHeaders);
     }
   }, []);
 
-  async function connectWith(ep: string, tk: string) {
+  async function connectWith(ep: string, tk: string, epHeaders: CustomHeader[] = endpointHeaders) {
     const cleanEp = ep.trim().replace(/\/+$/, "");
     const cleanTk = tk.trim();
     if (!cleanEp || !cleanTk) {
@@ -348,17 +763,19 @@ function OpenAIPlayground() {
     setStatus("connecting");
     setStatusMessage("Contacting endpoint...");
     try {
-      const data = await fetchModels(cleanEp, cleanTk);
+      const data = await fetchModels(cleanEp, cleanTk, epHeaders);
       setModels(data);
       setConnectedEndpoint(cleanEp);
       setConnectedToken(cleanTk);
+      setConnectedEndpointHeaders(epHeaders);
       setCookie(ENDPOINT_COOKIE, cleanEp);
       setCookie(TOKEN_COOKIE, cleanTk);
+      setCookie(ENDPOINT_HEADERS_COOKIE, JSON.stringify(epHeaders));
       setStatus("connected");
       setStatusMessage(`Connected — ${data.length} model${data.length === 1 ? "" : "s"} available`);
       setError("");
       setNotice(
-        "Endpoint and API key stored in browser cookies. Anything sent to the model leaves this page — treat the API key as sensitive.",
+        "Endpoint, API key, and custom headers stored in browser cookies. Anything sent to the model leaves this page — treat credentials as sensitive.",
       );
     } catch (e: unknown) {
       setConnectedEndpoint("");
@@ -369,14 +786,14 @@ function OpenAIPlayground() {
   }
 
   function connect() {
-    void connectWith(endpoint, token);
+    void connectWith(endpoint, token, endpointHeaders);
   }
 
   async function refreshModels() {
     if (!connectedEndpoint || !connectedToken) return;
     setModelsLoading(true);
     try {
-      const data = await fetchModels(connectedEndpoint, connectedToken);
+      const data = await fetchModels(connectedEndpoint, connectedToken, connectedEndpointHeaders);
       setModels(data);
       setStatus("connected");
       setStatusMessage(`Connected — ${data.length} model${data.length === 1 ? "" : "s"} available`);
@@ -526,6 +943,8 @@ function OpenAIPlayground() {
           }
         },
         controller.signal,
+        connectedEndpointHeaders,
+        currentModelHeaders,
       );
       const assistantContent = streamTextRef.current;
       setMessages((prev) => [...prev, { role: "assistant", content: assistantContent }]);
@@ -612,6 +1031,8 @@ function OpenAIPlayground() {
           if (usage?.completion_tokens) usageTokens = usage.completion_tokens;
         },
         controller.signal,
+        connectedEndpointHeaders,
+        currentModelHeaders,
       );
 
       const totalMs = Math.max(1, nowMs() - start);
@@ -647,89 +1068,143 @@ function OpenAIPlayground() {
           ? "var(--dt-status-error)"
           : "var(--dt-status-idle)";
 
+  const activeEndpointHeadersCount = endpointHeaders.filter((h) => h.enabled && h.key.trim()).length;
+  const activeModelHeadersCount = currentModelHeaders.filter((h) => h.enabled && h.key.trim()).length;
+
   const inputRow = (
-    <div style={{ display: "flex", gap: "var(--dt-space-3)" }}>
-      <div style={{ flex: 1 }}>
-        <label style={{ fontSize: "var(--dt-text-xs)", color: "var(--dt-text-secondary)", display: "block", marginBottom: "var(--dt-space-1)" }}>
-          Endpoint URL
-        </label>
-        <input
-          type="text"
-          value={endpoint}
-          onChange={(e) => setEndpoint(e.target.value)}
-          placeholder="https://api.openai.com/v1"
-          spellCheck={false}
-          style={{
-            width: "100%",
-            boxSizing: "border-box",
-            minHeight: "42px",
-            padding: "var(--dt-space-2) var(--dt-space-3)",
-            backgroundColor: "var(--dt-bg-tertiary)",
-            border: "1px solid var(--dt-border-primary)",
-            borderRadius: "var(--dt-radius-md)",
-            color: "var(--dt-text-primary)",
-            fontSize: "var(--dt-text-sm)",
-            fontFamily: "var(--dt-font-mono)",
-            outline: "none",
-          }}
-        />
+    <div style={{ display: "flex", flexDirection: "column", gap: "var(--dt-space-3)" }}>
+      <div style={{ display: "flex", gap: "var(--dt-space-3)", flexWrap: "wrap" }}>
+        <div style={{ flex: isMobile ? "1 1 100%" : 1, minWidth: isMobile ? "100%" : "220px" }}>
+          <label style={{ fontSize: "var(--dt-text-xs)", color: "var(--dt-text-secondary)", display: "block", marginBottom: "var(--dt-space-1)" }}>
+            Endpoint URL
+          </label>
+          <input
+            type="text"
+            value={endpoint}
+            onChange={(e) => setEndpoint(e.target.value)}
+            placeholder="https://api.openai.com/v1"
+            spellCheck={false}
+            style={{
+              width: "100%",
+              boxSizing: "border-box",
+              minHeight: "42px",
+              padding: "var(--dt-space-2) var(--dt-space-3)",
+              backgroundColor: "var(--dt-bg-tertiary)",
+              border: "1px solid var(--dt-border-primary)",
+              borderRadius: "var(--dt-radius-md)",
+              color: "var(--dt-text-primary)",
+              fontSize: "var(--dt-text-sm)",
+              fontFamily: "var(--dt-font-mono)",
+              outline: "none",
+            }}
+          />
+        </div>
+        <div style={{ flex: isMobile ? "1 1 100%" : 1, minWidth: isMobile ? "100%" : "220px" }}>
+          <label style={{ fontSize: "var(--dt-text-xs)", color: "var(--dt-text-secondary)", display: "block", marginBottom: "var(--dt-space-1)" }}>
+            API Key
+          </label>
+          <input
+            type="password"
+            value={token}
+            onChange={(e) => setToken(e.target.value)}
+            placeholder="sk-..."
+            spellCheck={false}
+            style={{
+              width: "100%",
+              boxSizing: "border-box",
+              minHeight: "42px",
+              padding: "var(--dt-space-2) var(--dt-space-3)",
+              backgroundColor: "var(--dt-bg-tertiary)",
+              border: "1px solid var(--dt-border-primary)",
+              borderRadius: "var(--dt-radius-md)",
+              color: "var(--dt-text-primary)",
+              fontSize: "var(--dt-text-sm)",
+              fontFamily: "var(--dt-font-mono)",
+              outline: "none",
+            }}
+          />
+        </div>
+        <div style={{ display: "flex", gap: "var(--dt-space-2)", alignSelf: "flex-end", flexWrap: "wrap" }}>
+          <button
+            type="button"
+            onClick={() => setShowEndpointHeaders((prev) => !prev)}
+            title="Configure custom headers sent with all requests to this endpoint"
+            aria-label="Toggle endpoint headers"
+            style={{
+              minHeight: "42px",
+              padding: "var(--dt-space-2) var(--dt-space-3)",
+              backgroundColor: showEndpointHeaders || activeEndpointHeadersCount > 0 ? "rgba(99, 102, 241, 0.12)" : "var(--dt-bg-tertiary)",
+              color: showEndpointHeaders || activeEndpointHeadersCount > 0 ? "var(--dt-accent-primary)" : "var(--dt-text-secondary)",
+              border: "1px solid " + (showEndpointHeaders || activeEndpointHeadersCount > 0 ? "var(--dt-accent-primary)" : "var(--dt-border-primary)"),
+              borderRadius: "var(--dt-radius-md)",
+              fontSize: "var(--dt-text-sm)",
+              fontWeight: "var(--dt-font-medium)",
+              cursor: "pointer",
+              display: "inline-flex",
+              alignItems: "center",
+              gap: "var(--dt-space-2)",
+            }}
+          >
+            <SlidersHorizontal size={15} />
+            <span>Headers</span>
+            {activeEndpointHeadersCount > 0 && (
+              <span
+                style={{
+                  fontSize: "11px",
+                  padding: "0 6px",
+                  backgroundColor: "var(--dt-accent-primary)",
+                  color: "white",
+                  borderRadius: "var(--dt-radius-full)",
+                  fontWeight: "var(--dt-font-bold)",
+                }}
+              >
+                {activeEndpointHeadersCount}
+              </span>
+            )}
+            {showEndpointHeaders ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+          </button>
+          <button
+            type="button"
+            onClick={connect}
+            disabled={status === "connecting"}
+            style={{
+              minHeight: "42px",
+              padding: "var(--dt-space-2) var(--dt-space-5)",
+              backgroundColor: "var(--dt-accent-primary)",
+              color: "white",
+              border: "none",
+              borderRadius: "var(--dt-radius-md)",
+              fontSize: "var(--dt-text-sm)",
+              fontWeight: "var(--dt-font-semibold)",
+              cursor: status === "connecting" ? "not-allowed" : "pointer",
+              display: "flex",
+              alignItems: "center",
+              gap: "var(--dt-space-2)",
+              opacity: status === "connecting" ? 0.6 : 1,
+            }}
+          >
+            {status === "connecting" ? (
+              <>
+                <Loader2 size={16} style={{ animation: "spin 1s linear infinite" }} /> Connecting
+              </>
+            ) : (
+              <>
+                <Shield size={16} /> {status === "connected" ? "Reconnect" : "Connect"}
+              </>
+            )}
+          </button>
+        </div>
       </div>
-      <div style={{ flex: 1 }}>
-        <label style={{ fontSize: "var(--dt-text-xs)", color: "var(--dt-text-secondary)", display: "block", marginBottom: "var(--dt-space-1)" }}>
-          API Key
-        </label>
-        <input
-          type="password"
-          value={token}
-          onChange={(e) => setToken(e.target.value)}
-          placeholder="sk-..."
-          spellCheck={false}
-          style={{
-            width: "100%",
-            boxSizing: "border-box",
-            minHeight: "42px",
-            padding: "var(--dt-space-2) var(--dt-space-3)",
-            backgroundColor: "var(--dt-bg-tertiary)",
-            border: "1px solid var(--dt-border-primary)",
-            borderRadius: "var(--dt-radius-md)",
-            color: "var(--dt-text-primary)",
-            fontSize: "var(--dt-text-sm)",
-            fontFamily: "var(--dt-font-mono)",
-            outline: "none",
-          }}
+
+      {showEndpointHeaders && (
+        <HeadersEditor
+          title="Endpoint-Level Custom Headers"
+          subtitle="Sent on /models and inherited by all model completions from this endpoint (e.g. HTTP-Referer, X-Title, organization headers)."
+          headers={endpointHeaders}
+          onChange={handleEndpointHeadersChange}
+          onClose={() => setShowEndpointHeaders(false)}
         />
-      </div>
-      <button
-        type="button"
-        onClick={connect}
-        disabled={status === "connecting"}
-        style={{
-          alignSelf: "flex-end",
-          minHeight: "42px",
-          padding: "var(--dt-space-2) var(--dt-space-5)",
-          backgroundColor: "var(--dt-accent-primary)",
-          color: "white",
-          border: "none",
-          borderRadius: "var(--dt-radius-md)",
-          fontSize: "var(--dt-text-sm)",
-          fontWeight: "var(--dt-font-semibold)",
-          cursor: status === "connecting" ? "not-allowed" : "pointer",
-          display: "flex",
-          alignItems: "center",
-          gap: "var(--dt-space-2)",
-          opacity: status === "connecting" ? 0.6 : 1,
-        }}
-      >
-        {status === "connecting" ? (
-          <>
-            <Loader2 size={16} style={{ animation: "spin 1s linear infinite" }} /> Connecting
-          </>
-        ) : (
-          <>
-            <Shield size={16} /> {status === "connected" ? "Reconnect" : "Connect"}
-          </>
-        )}
-      </button>
+      )}
     </div>
   );
 
@@ -988,6 +1463,47 @@ function OpenAIPlayground() {
 
           <button
             type="button"
+            onClick={() => setShowModelHeaders((prev) => !prev)}
+            disabled={!selectedModel}
+            title={selectedModel ? `Configure custom headers specifically for ${selectedModel}` : "Select a model first"}
+            aria-label="Model custom headers"
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: "var(--dt-space-1)",
+              minHeight: "34px",
+              padding: "0 var(--dt-space-2)",
+              backgroundColor: showModelHeaders || activeModelHeadersCount > 0 ? "rgba(99, 102, 241, 0.15)" : "var(--dt-bg-tertiary)",
+              border: "1px solid " + (showModelHeaders || activeModelHeadersCount > 0 ? "var(--dt-accent-primary)" : "var(--dt-border-primary)"),
+              borderRadius: "var(--dt-radius-md)",
+              color: showModelHeaders || activeModelHeadersCount > 0 ? "var(--dt-accent-primary)" : "var(--dt-text-secondary)",
+              fontSize: "var(--dt-text-xs)",
+              fontWeight: "var(--dt-font-medium)",
+              cursor: selectedModel ? "pointer" : "not-allowed",
+              opacity: selectedModel ? 1 : 0.5,
+            }}
+          >
+            <SlidersHorizontal size={13} />
+            <span>Headers</span>
+            {activeModelHeadersCount > 0 && (
+              <span
+                style={{
+                  fontSize: "11px",
+                  padding: "0 5px",
+                  backgroundColor: "var(--dt-accent-primary)",
+                  color: "white",
+                  borderRadius: "var(--dt-radius-full)",
+                  fontWeight: "var(--dt-font-bold)",
+                }}
+              >
+                {activeModelHeadersCount}
+              </span>
+            )}
+            {showModelHeaders ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+          </button>
+
+          <button
+            type="button"
             onClick={isBenchmarking ? stopBenchmark : runBenchmark}
             disabled={!selectedModel || isStreaming}
             title={isBenchmarking ? "Stop benchmark" : "Benchmark output TPS"}
@@ -1066,7 +1582,21 @@ function OpenAIPlayground() {
         </div>
       </div>
 
-      <div style={{ padding: "var(--dt-space-4) var(--dt-space-5) 0" }}>{savedChips}</div>
+      <div style={{ padding: "var(--dt-space-4) var(--dt-space-5) 0" }}>
+        {showModelHeaders && selectedModel && (
+          <div style={{ marginBottom: "var(--dt-space-3)" }}>
+            <HeadersEditor
+              title={`Model Custom Headers (${selectedModel})`}
+              subtitle={`Sent with completions & benchmarks for ${selectedModel}. Inherits endpoint headers unless overridden.`}
+              headers={currentModelHeaders}
+              onChange={(next) => handleModelHeadersChange(selectedModel, next)}
+              onClose={() => setShowModelHeaders(false)}
+              inheritedHeaders={connectedEndpointHeaders}
+            />
+          </div>
+        )}
+        {savedChips}
+      </div>
 
       {!activeChat ? (
         <div
