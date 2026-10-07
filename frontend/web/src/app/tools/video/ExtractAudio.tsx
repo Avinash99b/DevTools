@@ -1,56 +1,56 @@
-import { useState } from "react";
 import { registerDevTool } from "../../core/DevToolManager";
 import { ToolCategories } from "../../core/CategoryManager";
 import { BaseTool } from "../../components/BaseTool";
-import { submitJob } from "../../core/jobs";
-import { api } from "../../core/api";
+import { useRemoteJob } from "../../core/useRemoteJob";
+import { uploadFile, fileDownloadUrl } from "../../core/jobs";
+import type { DevTool } from "../../types/DevTool";
+
+const META = {
+  id: "extract-audio-tool",
+  name: "Extract Audio",
+  author: "System",
+  categoryId: ToolCategories.VIDEO,
+  description: "Extract audio track from a video file."
+};
 
 function ExtractAudio() {
-  const [output, setOutput] = useState<any>();
+  const job = useRemoteJob(META.id, {
+    prepare: async (data) => {
+      const file = (data.file as File[])?.[0];
+      if (!file) throw new Error("No video file selected.");
+      job.addLog("info", `Uploading ${file.name}...`);
+      const upload = await uploadFile(file);
+      return { fileId: upload.fileId, format: data.format || "mp3" };
+    },
+    onComplete: (result) => ({
+      output: {
+        type: "remoteFile",
+        title: "Audio Extracted",
+        data: {
+          label: String(result?.filename ?? "extracted_audio"),
+          href: fileDownloadUrl(String(result?.fileId ?? "")),
+          meta: [
+            `Size: ${((Number(result?.size) || 0) / 1024).toFixed(2)} KB`,
+            `Type: ${String(result?.mimeType ?? "audio")}`,
+          ],
+        },
+      },
+      logs: [{ level: "success" as const, message: result?.message ?? "Audio extracted successfully." }],
+    }),
+  });
 
-  const toolMeta = {
-    id: "extract-audio-tool",
-    name: "Extract Audio",
-    author: "System",
-    categoryId: ToolCategories.VIDEO,
-    description: "Extract audio track from a video file.",
-    tool: ExtractAudio
-  };
-
-  const handleExecute = async (data: Record<string, any>) => {
-    try {
-        const file = data.file?.[0] as File;
-        if (!file) throw new Error("No video file selected");
-
-        const formData = new FormData();
-        formData.append('file', file);
-
-        const uploadRes = await api.post('/api/files/upload', formData, {
-             headers: { 'Content-Type': 'multipart/form-data' }
-        });
-
-        const fileId = uploadRes.data.fileId;
-
-        const response = await submitJob(toolMeta.id, { fileId, format: data.format || 'mp3' });
-
-        if (response.status === 'completed') {
-             setOutput({ type: 'text', data: 'Done' });
-        } else {
-             return { jobId: response.jobId };
-        }
-    } catch (e: any) {
-        throw new Error(e.response?.data?.error || e.message || "Failed to extract audio");
-    }
-  };
+  const toolMeta: DevTool = { ...META, tool: ExtractAudio };
 
   return (
     <BaseTool
       toolMeta={toolMeta}
-      isExecuting={false}
-      logs={[]}
-      output={output}
-      onExecute={handleExecute}
-      clearLogs={() => setOutput(undefined)}
+      isExecuting={job.isExecuting}
+      logs={job.logs}
+      output={job.output}
+      error={job.error}
+      progress={job.progress}
+      onExecute={job.execute}
+      clearLogs={job.reset}
       fields={[
          { name: "file", type: "file", label: "Video File", fileOptions: { accept: "video/*", multiple: false }, required: true },
          { name: "format", type: "select", label: "Output Format", options: ["mp3", "aac", "wav"] }
@@ -59,11 +59,4 @@ function ExtractAudio() {
   );
 }
 
-registerDevTool({
-  author: "System",
-  categoryId: ToolCategories.VIDEO,
-  description: "Extract audio track from a video file.",
-  id: "extract-audio-tool",
-  name: "Extract Audio",
-  tool: ExtractAudio
-});
+registerDevTool({ ...META, tool: ExtractAudio });

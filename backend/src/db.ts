@@ -34,4 +34,14 @@ db.exec(`
         path TEXT NOT NULL,
         createdAt DATETIME DEFAULT CURRENT_TIMESTAMP
     );
+
+    CREATE TABLE IF NOT EXISTS sessions (
+        id TEXT PRIMARY KEY,
+        createdAt INTEGER NOT NULL,
+        expiresAt INTEGER NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_sessions_expiresAt ON sessions (expiresAt);
+    CREATE INDEX IF NOT EXISTS idx_jobs_sessionId ON jobs (sessionId);
+    CREATE INDEX IF NOT EXISTS idx_files_sessionId ON files (sessionId);
 `);

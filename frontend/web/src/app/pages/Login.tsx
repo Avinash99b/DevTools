@@ -35,16 +35,21 @@ export function Login() {
 
                 <form onSubmit={handleSubmit} className="space-y-4">
                     <div>
+                        <label htmlFor="login-secret" className="mb-1 block text-sm font-medium text-[var(--dt-text-secondary)]">
+                            Shared secret
+                        </label>
                         <input
+                            id="login-secret"
                             type="password"
                             value={secret}
                             onChange={(e) => setSecret(e.target.value)}
                             className="w-full rounded-md border border-[var(--dt-border)] bg-[var(--dt-bg-tertiary)] px-4 py-2 text-[var(--dt-text-primary)] focus:outline-none focus:ring-1"
                             placeholder="Enter shared secret..."
+                            autoComplete="current-password"
                             required
                         />
                     </div>
-                    {error && <div className="text-sm text-red-500">{error}</div>}
+                    {error && <div role="alert" aria-live="assertive" className="text-sm text-red-500">{error}</div>}
                     <button type="submit" disabled={isLoading} className="w-full rounded-md bg-[var(--dt-accent-primary)] px-4 py-2 text-white">
                         {isLoading ? 'Authenticating...' : 'Login'}
                     </button>

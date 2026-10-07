@@ -62,8 +62,12 @@ registerDevTool({
 The application automatically discovers and loads tools from the `/tools` directory.
 
 ```ts
-const modules = import.meta.glob("../tools/**/*.tsx", { eager: true })
+const modules = import.meta.glob("./tools/**/*.tsx") // lazy loaders
+await Promise.all(Object.values(modules).map(loader => loader()))
 ```
+
+Tools are code-split: each file is a lazy import that is loaded (and therefore
+registers itself) during app startup before routes are generated.
 
 This means that adding a new tool is usually as simple as:
 
@@ -107,7 +111,7 @@ Responsibilities:
 * Prevent duplicate tool IDs
 * Retrieve tools by category
 * Retrieve a tool by ID
-* Notify the UI when tools change
+* Notify subscribers when tools change (via `subscribe` / `getSnapshot`)
 
 Example:
 
@@ -122,6 +126,8 @@ Available methods:
 * `getToolsByCategoryId(...)`
 * `getToolCountByCategoryId(...)`
 * `getAllTools()`
+* `subscribe(listener)`
+* `getSnapshot()`
 
 ---
 
@@ -247,31 +253,23 @@ The current implementation already uses:
 
 ---
 
-# Future Backend Compatibility
+# Backend Execution
 
-The first versions of DevTools are focused on tools that run directly in the frontend.
+A Node/Express backend powers server-side features such as video/audio processing,
+proxy downloads and AI utilities. It is included in `backend/`.
 
-In the future, some tools may optionally support backend execution.
+* Tools declare `mode: 'sync' | 'async'`; async tools are queued and polled.
+* Sessions are stored server-side and validated on every request.
+* Uploads are size and type limited; downloaded files are written under a
+  generated name inside `STORAGE_PATH` so remote input can never escape it.
+* Outbound proxy downloads resolve and validate the destination IP (all A/AAAA
+  records, IPv4 and IPv6) and revalidate every redirect.
 
-Examples:
+On the frontend, use the shared `useRemoteJob` hook (`core/useRemoteJob.ts`) to
+run a backend tool: it handles upload preparation, submission, polling, progress,
+logs, errors and result rendering.
 
-* Video conversion
-* AI utilities
-* APK / AAB processing
-* Large file operations
-
-The architecture is being designed so a tool can later choose between:
-
-* Frontend-only execution
-* Backend execution
-* Both
-
-Possible future backend stack:
-
-* entity["software","FastAPI","python web framework"]
-* Docker
-* REST API
-* Optional self-hosting
+Possible upstream/paths for self-hosting are described in `DEPLOYMENT.md`.
 
 ---
 

@@ -148,7 +148,7 @@ function ImageCompressor() {
 
             {/* Execution Panel */}
             <ExecutionPanel
-                isRemoteAvailable={true}
+                isRemoteAvailable={false}
                 isExecuting={isExecuting}
                 toolName={'image-compressor-tool'}
                 fields={[

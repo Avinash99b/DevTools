@@ -40,4 +40,14 @@ export type DevToolHtmlOutput = {
     data: string;
 }
 
-export type DevToolOutput = DevToolFilesOutput | DevToolTextOutput | DevToolImageOutput | DevToolVideoOutput | DevToolFileOutput | DevToolCodeOutput | DevToolHtmlOutput;
+export type DevToolRemoteFileOutput = {
+    title?: string;
+    type: "remoteFile";
+    data: {
+        label: string;
+        href: string;
+        meta?: string[];
+    };
+}
+
+export type DevToolOutput = DevToolFilesOutput | DevToolTextOutput | DevToolImageOutput | DevToolVideoOutput | DevToolFileOutput | DevToolCodeOutput | DevToolHtmlOutput | DevToolRemoteFileOutput;

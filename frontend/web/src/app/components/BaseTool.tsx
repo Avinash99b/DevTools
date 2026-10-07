@@ -31,10 +31,12 @@ interface BaseToolProps {
   isExecuting: boolean;
   logs: LogEntry[];
   output?: DevToolOutput | DevToolOutput[];
-  onExecute: (data: Record<string, any>) => void;
+  onExecute: (data: Record<string, any>) => void | Promise<void>;
   clearLogs: () => void;
   fields: FormField[];
   executeButtonVisible?: boolean;
+  progress?: number;
+  error?: string;
 }
 
 export function BaseTool({
@@ -45,7 +47,9 @@ export function BaseTool({
   onExecute,
   clearLogs,
   fields,
-  executeButtonVisible = true
+  executeButtonVisible = true,
+  progress,
+  error
 }: BaseToolProps) {
   const isRealtime = toolMeta.supportsRealtime;
 
@@ -128,6 +132,8 @@ export function BaseTool({
         onExecute={onExecute}
         output={output}
         clearLogs={clearLogs}
+        progress={progress}
+        error={error}
       />
     </div>
   );

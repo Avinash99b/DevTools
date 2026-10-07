@@ -5,6 +5,8 @@ import dotenv from 'dotenv';
 import { setupAuth, authMiddleware } from './auth';
 import jobsRouter from './routes/jobs';
 import filesRouter from './routes/files';
+import { publicError, runCleanupJob } from './cleanup';
+import { recoverPendingJobs } from './worker';
 import './tools/dev/DummyAsync';
 import './tools/network/ProxyDownloader';
 import './tools/video/ExtractAudio';
@@ -19,21 +21,28 @@ app.use(cors({
     origin: process.env.CORS_ORIGIN || 'http://localhost:5173',
     credentials: true,
 }));
-app.use(express.json());
+app.use(express.json({ limit: '2mb' }));
 app.use(cookieParser());
 setupAuth(app);
-app.use(authMiddleware);
 
+// Public health check must come before auth so uptime probes work.
 app.get('/api/health', (req: Request, res: Response) => res.json({ status: 'ok' }));
+
+app.use(authMiddleware);
 app.use('/api/jobs', jobsRouter);
 app.use('/api/files', filesRouter);
 
 app.use((err: Error, req: Request, res: Response, next: NextFunction) => {
-    console.error(err.stack);
-    res.status(500).json({ error: err.message || 'Internal Server Error' });
+    const mapped = publicError(err);
+    console.error(`[${new Date().toISOString()}] ${req.method} ${req.originalUrl} ->`, err);
+    if (res.headersSent) return next(err);
+    res.status(mapped.status).json({ error: mapped.message, code: mapped.code });
 });
 
 if (require.main === module) {
+    recoverPendingJobs();
+    // Periodic storage reconciliation (orphans, dangling rows, cap eviction).
+    setInterval(() => { void runCleanupJob(); }, 15 * 60 * 1000);
     app.listen(PORT, () => console.log(`Server listening on port ${PORT}`));
 }
 export default app;
