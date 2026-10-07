@@ -1,6 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { getFileRecord, saveFileRecord, getStoragePath, getMaxFileSize, enforceFileSize } from '../storage';
 import { resolveStoragePath, sanitizeDisplayName, safeExtension } from '../security/safeFilename';
+import { fileHasMediaSignature } from '../security/mediaSignature';
 import fs from 'fs';
 import crypto from 'crypto';
 import multer from 'multer';
@@ -31,6 +32,11 @@ router.post('/upload', upload.single('file'), async (req: Request, res: Response
     try {
         enforceFileSize(file.size);
         if (file.mimetype && !ALLOWED_UPLOAD_MIME.has(file.mimetype)) {
+            throw new Error('Unsupported file type for server-side processing.');
+        }
+        // Content sniffing: the declared Content-Type is attacker controlled, so
+        // verify the actual leading bytes are a known media container.
+        if (!(await fileHasMediaSignature(file.path))) {
             throw new Error('Unsupported file type for server-side processing.');
         }
 

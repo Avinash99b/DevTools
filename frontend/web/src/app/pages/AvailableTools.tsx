@@ -1,5 +1,5 @@
-import { useMemo, useState } from "react";
-import { useParams } from "react-router";
+import { useEffect, useMemo, useState } from "react";
+import { useNavigate, useParams, useSearchParams } from "react-router";
 import { Filter, TrendingUp, Clock, Search } from "lucide-react";
 import { ToolCard } from "../components/ToolCard";
 import CategoryManager from "../core/CategoryManager";
@@ -7,12 +7,32 @@ import DevToolManager from "../core/DevToolManager";
 
 export function AvailableTools() {
   const { categoryName } = useParams();
+  const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const categories = CategoryManager.getCategories();
   const [selectedCategory, setSelectedCategory] = useState<string>(() =>
     categoryName && categories.some((cat) => cat.id === categoryName) ? categoryName : "all",
   );
   const [sortBy, setSortBy] = useState<string>("most-used");
-  const [query, setQuery] = useState("");
+  const [query, setQuery] = useState(() => searchParams.get("q") ?? "");
+
+  // Keep local selection in sync with the URL (deep links and back/forward).
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- syncing state from the route param
+    setSelectedCategory(categoryName && categories.some((cat) => cat.id === categoryName) ? categoryName : "all");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [categoryName]);
+
+  // Accept a search query supplied via the header search box (?q=...).
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- syncing state from the URL query
+    setQuery(searchParams.get("q") ?? "");
+  }, [searchParams]);
+
+  const selectCategory = (id: string) => {
+    setSelectedCategory(id);
+    navigate(id === "all" ? "/available-tools" : `/available-tools/${id}`);
+  };
 
   const sortOptions = [
     { id: "most-used", label: "Most Popular", icon: TrendingUp },
@@ -134,7 +154,7 @@ export function AvailableTools() {
           <div style={{ display: "flex", gap: "var(--dt-space-2)", flexWrap: "wrap" }}>
             <button
               type="button"
-              onClick={() => setSelectedCategory("all")}
+              onClick={() => selectCategory("all")}
               style={{
                 minHeight: "40px",
                 padding: "var(--dt-space-2) var(--dt-space-4)",
@@ -163,7 +183,7 @@ export function AvailableTools() {
               <button
                 key={cat.id}
                 type="button"
-                onClick={() => setSelectedCategory(cat.id)}
+                onClick={() => selectCategory(cat.id)}
                 style={{
                   minHeight: "40px",
                   padding: "var(--dt-space-2) var(--dt-space-4)",

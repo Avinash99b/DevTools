@@ -126,8 +126,8 @@ export function ToolCard({
           <Play size={16} />
           Run
         </Link>
-        <button
-          type="button"
+        <Link
+          to={`/tool/${id}`}
           aria-label={`Open settings for ${name}`}
           style={{
             minWidth: "42px",
@@ -141,10 +141,11 @@ export function ToolCard({
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
+            textDecoration: "none",
           }}
         >
           <Settings size={16} />
-        </button>
+        </Link>
       </div>
     </article>
   );

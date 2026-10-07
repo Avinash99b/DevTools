@@ -29,11 +29,26 @@ const BLOCKED_RANGES = new Set([
 ]);
 
 /**
+ * Returns true when the given string is a literal IP address (v4 or v6).
+ * Importantly this returns false for hostnames such as "example.com", which
+ * must still be allowed through to DNS resolution.
+ */
+export function isIpLiteral(value: string): boolean {
+    let ip = value.trim();
+    const zoneIndex = ip.indexOf('%');
+    if (zoneIndex !== -1) ip = ip.slice(0, zoneIndex);
+    if (ip.startsWith('[') && ip.endsWith(']')) ip = ip.slice(1, -1);
+    return net.isIP(ip) !== 0;
+}
+
+/**
  * Returns true when an IP literal points at a private, loopback, link-local,
  * multicast, reserved or otherwise non-public destination.
  *
  * All IP families are handled through `ipaddr.js` so IPv6, IPv4-mapped IPv6 and
  * the full set of special-use ranges are covered (not just a few IPv4 prefixes).
+ * Non-IP strings are treated as *not blocked* here; use {@link isIpLiteral} to
+ * distinguish "unparseable" from "private".
  */
 export function isBlockedIp(rawIp: string): boolean {
     let ip = rawIp.trim();
@@ -43,7 +58,7 @@ export function isBlockedIp(rawIp: string): boolean {
     // url.hostname keeps IPv6 addresses wrapped in brackets
     if (ip.startsWith('[') && ip.endsWith(']')) ip = ip.slice(1, -1);
 
-    if (!ipaddr.isValid(ip)) return true; // fail closed on anything unparseable
+    if (net.isIP(ip) === 0) return false; // not an IP literal -> not a blocked IP
     let addr = ipaddr.parse(ip);
 
     // Normalise IPv4-mapped / 6to4 / teredo wrappers to the embedded IPv4 so the
@@ -94,14 +109,20 @@ export async function resolvePublicHost(hostname: string): Promise<{ address: st
 export function makeSafeLookup(validated: { address: string; family: 4 | 6 }[]) {
     return (
         _hostname: string,
-        _options: any,
-        callback: (err: NodeJS.ErrnoException | null, address: string, family: number) => void
+        options: any,
+        callback: (...args: any[]) => void
     ) => {
-        const first = validated[0];
-        if (!first) {
-            callback(new Error('No validated address available.'), '', 0);
+        if (!validated.length) {
+            callback(new Error('No validated address available.'));
             return;
         }
+        // Node calls lookup with `all: true` on recent versions; honour both
+        // shapes so the socket never receives an invalid address argument.
+        if (options && options.all) {
+            callback(null, validated.map((v) => ({ address: v.address, family: v.family })));
+            return;
+        }
+        const first = validated[0];
         callback(null, first.address, first.family);
     };
 }

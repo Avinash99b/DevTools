@@ -34,10 +34,11 @@
   --dt-text-primary: #f3f4f6;
   --dt-text-secondary: #9ca3af;
   --dt-text-tertiary: #6b7280;
-  --dt-text-muted: #4b5563;
+  --dt-text-muted: #7b8494;
   --dt-text-inverse: #111827;
-  
+
   /* Border & Divider */
+  --dt-border: #1f2937;
   --dt-border-primary: #1f2937;
   --dt-border-secondary: #374151;
   --dt-border-accent: #4b5563;
@@ -135,6 +136,7 @@
   --dt-text-muted: #9ca3af;
   --dt-text-inverse: #f3f4f6;
   
+  --dt-border: #e5e7eb;
   --dt-border-primary: #e5e7eb;
   --dt-border-secondary: #d1d5db;
   --dt-border-accent: #9ca3af;

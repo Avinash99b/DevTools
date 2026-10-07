@@ -5,15 +5,22 @@ import "./ToolLoader";
 import { useEffect, useMemo, useState } from "react";
 import { loadTools } from "./ToolLoader";
 import { Loader2 } from "lucide-react";
+import { applyTheme, loadSettings } from "./core/settings";
 
 export default function App() {
   const [ready, setReady] = useState(false);
   const [bootError, setBootError] = useState<string | null>(null);
 
   useEffect(() => {
+    // Apply the persisted theme as early as possible.
+    applyTheme(loadSettings().theme);
+
     async function init() {
       try {
-        await loadTools();
+        const result = await loadTools();
+        if (result.failed.length) {
+          console.warn(`${result.failed.length} tool module(s) failed to load`, result.failed);
+        }
         setReady(true);
         console.log("All tools loaded");
       } catch (error) {

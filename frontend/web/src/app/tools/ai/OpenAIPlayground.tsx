@@ -96,13 +96,37 @@ function deleteCookie(name: string) {
   document.cookie = `${name}=; path=/; max-age=0; SameSite=Lax`;
 }
 
+// Credentials (endpoint URL, API key, custom headers) are kept in sessionStorage
+// rather than long-lived cookies so they are not readable by any script after the
+// tab closes and are never sent on cross-site requests.
+function setCredential(name: string, value: string) {
+  try { sessionStorage.setItem(name, value); } catch { /* ignore */ }
+  // Remove any legacy long-lived cookie left by older versions.
+  deleteCookie(name);
+}
+
+function getCredential(name: string): string {
+  try {
+    const existing = sessionStorage.getItem(name);
+    if (existing !== null) return existing;
+    // One-time migration from the legacy cookie store.
+    const legacy = getCookie(name);
+    if (legacy) {
+      try { sessionStorage.setItem(name, legacy); } catch { /* ignore */ }
+      deleteCookie(name);
+      return legacy;
+    }
+  } catch { /* ignore */ }
+  return "";
+}
+
 function makeId() {
   if (typeof crypto !== "undefined" && crypto.randomUUID) return crypto.randomUUID();
   return "chat_" + Math.random().toString(36).slice(2) + Date.now().toString(36);
 }
 
 function loadHeadersFromCookie(cookieName: string): CustomHeader[] {
-  const raw = getCookie(cookieName);
+  const raw = getCredential(cookieName);
   if (!raw) return [];
   try {
     const parsed = JSON.parse(raw);
@@ -123,7 +147,7 @@ function loadHeadersFromCookie(cookieName: string): CustomHeader[] {
 }
 
 function loadModelHeadersFromCookie(): Record<string, CustomHeader[]> {
-  const raw = getCookie(MODEL_HEADERS_COOKIE);
+  const raw = getCredential(MODEL_HEADERS_COOKIE);
   if (!raw) return {};
   try {
     const parsed = JSON.parse(raw);
@@ -671,8 +695,8 @@ function OpenAIPlayground() {
   const isMobile = useIsMobile();
   const availableHeight = useAvailableHeight();
 
-  const [endpoint, setEndpoint] = useState(() => getCookie(ENDPOINT_COOKIE));
-  const [token, setToken] = useState(() => getCookie(TOKEN_COOKIE));
+  const [endpoint, setEndpoint] = useState(() => getCredential(ENDPOINT_COOKIE));
+  const [token, setToken] = useState(() => getCredential(TOKEN_COOKIE));
   const [endpointHeaders, setEndpointHeaders] = useState<CustomHeader[]>(() =>
     loadHeadersFromCookie(ENDPOINT_HEADERS_COOKIE),
   );
@@ -683,7 +707,7 @@ function OpenAIPlayground() {
   const [showModelHeaders, setShowModelHeaders] = useState(false);
 
   const [status, setStatus] = useState<"idle" | "connecting" | "connected" | "error">(() =>
-    getCookie(ENDPOINT_COOKIE) && getCookie(TOKEN_COOKIE) ? "connecting" : "idle",
+    getCredential(ENDPOINT_COOKIE) && getCredential(TOKEN_COOKIE) ? "connecting" : "idle",
   );
   const [statusMessage, setStatusMessage] = useState("");
   const [connectedEndpoint, setConnectedEndpoint] = useState("");
@@ -727,13 +751,13 @@ function OpenAIPlayground() {
   function handleEndpointHeadersChange(next: CustomHeader[]) {
     setEndpointHeaders(next);
     setConnectedEndpointHeaders(next);
-    setCookie(ENDPOINT_HEADERS_COOKIE, JSON.stringify(next));
+    setCredential(ENDPOINT_HEADERS_COOKIE, JSON.stringify(next));
   }
 
   function handleModelHeadersChange(modelId: string, next: CustomHeader[]) {
     const updated = { ...modelHeadersMap, [modelId]: next };
     setModelHeadersMap(updated);
-    setCookie(MODEL_HEADERS_COOKIE, JSON.stringify(updated));
+    setCredential(MODEL_HEADERS_COOKIE, JSON.stringify(updated));
   }
 
   useEffect(() => {
@@ -744,8 +768,8 @@ function OpenAIPlayground() {
   useEffect(() => {
     if (autoConnectDoneRef.current) return;
     autoConnectDoneRef.current = true;
-    const savedEndpoint = getCookie(ENDPOINT_COOKIE);
-    const savedToken = getCookie(TOKEN_COOKIE);
+    const savedEndpoint = getCredential(ENDPOINT_COOKIE);
+    const savedToken = getCredential(TOKEN_COOKIE);
     const savedHeaders = loadHeadersFromCookie(ENDPOINT_HEADERS_COOKIE);
     if (savedEndpoint && savedToken) {
       void connectWith(savedEndpoint, savedToken, savedHeaders);
@@ -768,14 +792,14 @@ function OpenAIPlayground() {
       setConnectedEndpoint(cleanEp);
       setConnectedToken(cleanTk);
       setConnectedEndpointHeaders(epHeaders);
-      setCookie(ENDPOINT_COOKIE, cleanEp);
-      setCookie(TOKEN_COOKIE, cleanTk);
-      setCookie(ENDPOINT_HEADERS_COOKIE, JSON.stringify(epHeaders));
+      setCredential(ENDPOINT_COOKIE, cleanEp);
+      setCredential(TOKEN_COOKIE, cleanTk);
+      setCredential(ENDPOINT_HEADERS_COOKIE, JSON.stringify(epHeaders));
       setStatus("connected");
       setStatusMessage(`Connected — ${data.length} model${data.length === 1 ? "" : "s"} available`);
       setError("");
       setNotice(
-        "Endpoint, API key, and custom headers stored in browser cookies. Anything sent to the model leaves this page — treat credentials as sensitive.",
+        "Endpoint, API key, and custom headers are kept in session storage for this tab and are cleared when you close it. Anything sent to the model leaves this page — treat credentials as sensitive.",
       );
     } catch (e: unknown) {
       setConnectedEndpoint("");
@@ -2221,7 +2245,7 @@ function OpenAIPlayground() {
             OpenAI Playground
           </h1>
           <p style={{ margin: 0, fontSize: "var(--dt-text-sm)", color: "var(--dt-text-secondary)" }}>
-            Connect to any OpenAI-compatible endpoint, browse its models, and chat with streaming responses. Settings and chats persist in your browser cookies.
+            Connect to any OpenAI-compatible endpoint, browse its models, and chat with streaming responses. The API key is kept in session storage for this tab.
           </p>
         </div>
         <div
@@ -2337,7 +2361,7 @@ registerDevTool({
   author: "System",
   categoryId: ToolCategories.AI,
   description:
-    "Connect to any OpenAI-compatible endpoint, browse available models, and chat with streaming responses. Endpoint, API key, and chats are stored in browser cookies.",
+    "Connect to any OpenAI-compatible endpoint, browse available models, and chat with streaming responses. The API key is kept in session storage; chats are stored in browser cookies.",
   id: "openai-playground-tool",
   name: "OpenAI Playground",
   tool: OpenAIPlayground,

@@ -260,14 +260,16 @@ proxy downloads and AI utilities. It is included in `backend/`.
 
 * Tools declare `mode: 'sync' | 'async'`; async tools are queued and polled.
 * Sessions are stored server-side and validated on every request.
-* Uploads are size and type limited; downloaded files are written under a
-  generated name inside `STORAGE_PATH` so remote input can never escape it.
+* Uploads are size limited and content-sniffed against known media signatures
+  before being accepted; downloaded files are written under a generated name inside
+  `STORAGE_PATH` so remote input can never escape it.
 * Outbound proxy downloads resolve and validate the destination IP (all A/AAAA
-  records, IPv4 and IPv6) and revalidate every redirect.
+  records, IPv4 and IPv6, including IPv4-mapped IPv6) and revalidate every redirect.
+* `GET /api/stats` exposes live process/database metrics for the Server Dashboard.
 
 On the frontend, use the shared `useRemoteJob` hook (`core/useRemoteJob.ts`) to
 run a backend tool: it handles upload preparation, submission, polling, progress,
-logs, errors and result rendering.
+logs, errors and result rendering. Polling stops on unmount and is timeout-bounded.
 
 Possible upstream/paths for self-hosting are described in `DEPLOYMENT.md`.
 

@@ -1,18 +1,17 @@
+import './env';
 import express, { Request, Response, NextFunction } from 'express';
 import cors from 'cors';
 import cookieParser from 'cookie-parser';
-import dotenv from 'dotenv';
 import { setupAuth, authMiddleware } from './auth';
 import jobsRouter from './routes/jobs';
 import filesRouter from './routes/files';
+import statsRouter from './routes/stats';
 import { publicError, runCleanupJob } from './cleanup';
 import { recoverPendingJobs } from './worker';
 import './tools/dev/DummyAsync';
 import './tools/network/ProxyDownloader';
 import './tools/video/ExtractAudio';
 import './tools/ai/TokenEstimator';
-
-dotenv.config();
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -31,6 +30,7 @@ app.get('/api/health', (req: Request, res: Response) => res.json({ status: 'ok' 
 app.use(authMiddleware);
 app.use('/api/jobs', jobsRouter);
 app.use('/api/files', filesRouter);
+app.use('/api/stats', statsRouter);
 
 app.use((err: Error, req: Request, res: Response, next: NextFunction) => {
     const mapped = publicError(err);

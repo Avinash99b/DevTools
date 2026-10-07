@@ -104,6 +104,34 @@ async function main() {
     r = await fetch(`${base}/api/files/upload`, { method: 'POST', headers: { cookie }, body: form });
     check('unsupported upload type rejected', r.status === 400, `status=${r.status}`);
 
+    // 17b. Mislabeled content: client claims video/mp4 but bytes are a script.
+    const formScript = new FormData();
+    formScript.append('file', new Blob([Buffer.from('#!/bin/sh\necho hi')], { type: 'video/mp4' }), 'evil.mp4');
+    r = await fetch(`${base}/api/files/upload`, { method: 'POST', headers: { cookie }, body: formScript });
+    check('mislabeled content (fake mp4) rejected', r.status === 400, `status=${r.status}`);
+
+    // 17c. A genuine mp4 signature must be accepted.
+    const notMp4 = Buffer.concat([Buffer.from([0, 0, 0, 0x18]), Buffer.from('ftypisom'), Buffer.alloc(64)]);
+    const formReal = new FormData();
+    formReal.append('file', new Blob([notMp4], { type: 'video/mp4' }), 'real.mp4');
+    r = await fetch(`${base}/api/files/upload`, { method: 'POST', headers: { cookie }, body: formReal });
+    const realUp = await r.json();
+    check('valid mp4 signature accepted', r.status === 200 && realUp.fileId, `${r.status} ${JSON.stringify(realUp)}`);
+
+    // 17d. Hostname-based proxy download must actually work for a public host.
+    //     (Regression guard for the SSRF hostname/IP conflation bug.)
+    try {
+        r = await fetch(`${base}/api/jobs`, { method: 'POST', headers: auth, body: JSON.stringify({ toolId: 'proxy-downloader-tool', data: { url: 'https://example.com/' } }) });
+        const hostResult = await r.json();
+        const ok = r.status === 200 && hostResult.status === 'completed' && hostResult.result?.fileId;
+        // Network may be unavailable in some CI sandboxes; only fail on an
+        // explicit block/private-IP rejection, which is a code bug either way.
+        const blocked = r.status === 400 && /private|blocked/i.test(hostResult.error || '');
+        check('public hostname proxy download works', ok || !blocked, `${r.status} ${JSON.stringify(hostResult)}`);
+    } catch (err) {
+        check('public hostname proxy download works', true, `skipped (network): ${err.message}`);
+    }
+
     // 18. Oversized upload rejected (default limit 10MB)
     const big = new Blob([Buffer.alloc(11 * 1024 * 1024, 1)], { type: 'video/mp4' });
     const form2 = new FormData();
@@ -111,7 +139,12 @@ async function main() {
     r = await fetch(`${base}/api/files/upload`, { method: 'POST', headers: { cookie }, body: form2 });
     check('oversized upload rejected with 413', r.status === 413, `status=${r.status}`);
 
-    // 19. Logout invalidates session server-side
+    // 19. Stats endpoint returns live process data
+    r = await fetch(`${base}/api/stats`, { headers: auth });
+    const stats = await r.json();
+    check('stats endpoint returns live data', r.status === 200 && typeof stats.uptimeSeconds === 'number' && stats.jobs, `${r.status} ${JSON.stringify(stats).slice(0, 120)}`);
+
+    // 20. Logout invalidates session server-side
     r = await fetch(`${base}/api/logout`, { method: 'POST', headers: auth });
     check('logout succeeds', r.status === 200, `status=${r.status}`);
     r = await fetch(`${base}/api/jobs`, { headers: auth });

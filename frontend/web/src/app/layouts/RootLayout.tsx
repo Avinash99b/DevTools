@@ -1,4 +1,4 @@
-import { Outlet, Link, useLocation } from "react-router";
+import { Outlet, Link, useLocation, useNavigate } from "react-router";
 import { CommandPalette } from "../components/CommandPalette";
 import {
   Home,
@@ -8,13 +8,13 @@ import {
   Settings as SettingsIcon,
   Palette,
   Search,
-  Bell,
   Terminal,
-  Zap,
   Menu,
   X,
+  LogOut,
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import { api } from "../core/api";
 
 const TABLET_BREAKPOINT = 1024;
 const PHONE_BREAKPOINT = 768;
@@ -32,12 +32,25 @@ function getViewportState() {
 
 export function RootLayout() {
   const location = useLocation();
+  const navigate = useNavigate();
   const viewport = getViewportState();
   const [searchQuery, setSearchQuery] = useState("");
   const [isTabletOrBelow, setIsTabletOrBelow] = useState(viewport.isTabletOrBelow);
   const [isPhone, setIsPhone] = useState(viewport.isPhone);
   const [sidebarOpen, setSidebarOpen] = useState(!viewport.isTabletOrBelow);
   const searchInputRef = useRef<HTMLInputElement>(null);
+
+  // Submit the header search by navigating to the marketplace with a query.
+  const submitSearch = () => {
+    const q = searchQuery.trim();
+    navigate(q ? `/available-tools?q=${encodeURIComponent(q)}` : "/available-tools");
+    setSearchQuery("");
+  };
+
+  const handleLogout = async () => {
+    try { await api.post("/api/logout"); } catch { /* ignore */ }
+    navigate("/login");
+  };
 
   useEffect(() => {
     const handleResize = () => {
@@ -289,8 +302,7 @@ export function RootLayout() {
             </span>
           </div>
           <div style={{ fontSize: "var(--dt-text-xs)", color: "var(--dt-text-muted)" }}>
-            <Zap size={12} style={{ display: "inline", marginRight: "4px" }} />
-            Local Mode
+            Local-first workspace
           </div>
         </div>
       </aside>
@@ -368,6 +380,7 @@ export function RootLayout() {
               aria-label="Search tools"
               value={searchQuery}
               onChange={(event) => setSearchQuery(event.target.value)}
+              onKeyDown={(event) => { if (event.key === "Enter") submitSearch(); }}
               style={{
                 width: "100%",
                 minHeight: "42px",
@@ -386,7 +399,8 @@ export function RootLayout() {
           <div style={{ display: "flex", gap: "var(--dt-space-2)", marginLeft: "auto" }}>
             <button
               type="button"
-              aria-label="Notifications"
+              aria-label="Search tools"
+              onClick={submitSearch}
               style={{
                 width: "40px",
                 height: "40px",
@@ -400,25 +414,28 @@ export function RootLayout() {
                 color: "var(--dt-text-secondary)",
               }}
             >
-              <Bell size={18} />
+              <Search size={18} />
             </button>
-            <div
-              aria-label="User profile"
+            <button
+              type="button"
+              aria-label="Log out"
+              title="Log out"
+              onClick={handleLogout}
               style={{
                 width: "40px",
                 height: "40px",
                 borderRadius: "var(--dt-radius-md)",
-                backgroundColor: "var(--dt-accent-primary)",
+                backgroundColor: "var(--dt-bg-tertiary)",
+                border: "1px solid var(--dt-border-primary)",
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "center",
-                fontSize: "var(--dt-text-sm)",
-                fontWeight: "var(--dt-font-semibold)",
-                color: "white",
+                cursor: "pointer",
+                color: "var(--dt-text-secondary)",
               }}
             >
-              DT
-            </div>
+              <LogOut size={18} />
+            </button>
           </div>
         </header>
 

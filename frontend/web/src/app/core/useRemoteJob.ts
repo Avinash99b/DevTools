@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { LogEntry } from "../components/TerminalOutput";
 import type { DevToolOutput } from "../types/DevToolOutput";
 import { submitJob, pollJob } from "./jobs";
@@ -14,9 +14,13 @@ export interface RemoteJobConfig {
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
+const POLL_INTERVAL_MS = 1200;
+const MAX_POLL_ATTEMPTS = 300; // ~6 minutes ceiling
+
 /**
  * Shared controller for backend tools. Owns loading, progress, logs, errors and
  * polling so remote tools do not each reimplement the async job lifecycle.
+ * Polling stops on unmount and is bounded by a maximum attempt budget.
  */
 export function useRemoteJob(toolId: string, config: RemoteJobConfig) {
     const [isExecuting, setIsExecuting] = useState(false);
@@ -25,10 +29,19 @@ export function useRemoteJob(toolId: string, config: RemoteJobConfig) {
     const [output, setOutput] = useState<DevToolOutput | DevToolOutput[] | undefined>();
     const [error, setError] = useState<string | undefined>();
     const runningRef = useRef(false);
+    const mountedRef = useRef(true);
+    const abortRef = useRef<AbortController | null>(null);
     const configRef = useRef(config);
-    configRef.current = config;
+
+    useEffect(() => { configRef.current = config; });
+
+    useEffect(() => () => {
+        mountedRef.current = false;
+        abortRef.current?.abort();
+    }, []);
 
     const addLog = useCallback((level: LogEntry["level"], message: string) => {
+        if (!mountedRef.current) return;
         setLogs((prev) => [...prev, { level, message, timestamp: new Date().toLocaleTimeString() }]);
     }, []);
 
@@ -56,9 +69,11 @@ export function useRemoteJob(toolId: string, config: RemoteJobConfig) {
             if (!jobId) throw new Error("Server did not return a job id.");
             addLog("info", `Job ${jobId} queued.`);
 
-            for (;;) {
-                await sleep(1000);
+            for (let attempt = 0; attempt < MAX_POLL_ATTEMPTS; attempt++) {
+                await sleep(POLL_INTERVAL_MS);
+                if (!mountedRef.current) return;
                 const job = await pollJob(jobId);
+                if (!mountedRef.current) return;
                 setProgress(job.progress ?? 0);
 
                 if (job.status === "completed") {
@@ -77,13 +92,17 @@ export function useRemoteJob(toolId: string, config: RemoteJobConfig) {
                     return;
                 }
             }
+            throw new Error("Timed out waiting for the job to finish.");
         } catch (e: any) {
+            if (e?.name === "AbortError" || e?.code === "ERR_CANCELED") return;
             const message = e?.response?.data?.error || e?.message || "Execution failed.";
-            setError(message);
-            addLog("error", message);
+            if (mountedRef.current) {
+                setError(message);
+                addLog("error", message);
+            }
         } finally {
             runningRef.current = false;
-            setIsExecuting(false);
+            if (mountedRef.current) setIsExecuting(false);
         }
     }, [toolId, addLog]);
 
