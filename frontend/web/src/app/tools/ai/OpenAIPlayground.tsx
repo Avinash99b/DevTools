@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router";
 import { marked } from "marked";
 import {
@@ -26,17 +26,66 @@ import {
 } from "lucide-react";
 import { registerDevTool } from "../../core/DevToolManager";
 import { ToolCategories } from "../../core/CategoryManager";
+import { sanitizeHtml } from "../../core/sanitize";
 import { useIsMobile } from "../../components/ui/use-mobile";
 import { useAvailableHeight } from "../../components/ui/use-available-height";
 
-const COOKIE_PREFIX = "dt_ai_";
-const ENDPOINT_COOKIE = COOKIE_PREFIX + "endpoint";
-const TOKEN_COOKIE = COOKIE_PREFIX + "token";
-const ENDPOINT_HEADERS_COOKIE = COOKIE_PREFIX + "endpoint_headers";
-const MODEL_HEADERS_COOKIE = COOKIE_PREFIX + "model_headers";
-const CHATS_INDEX_COOKIE = COOKIE_PREFIX + "chats";
-const CHAT_COOKIE = (id: string) => COOKIE_PREFIX + "chat_" + id;
-const MAX_COOKIE_CHARS = 3500;
+// ---------------------------------------------------------------------------
+// Persistence
+//
+// Everything the playground remembers (endpoint, API key, custom headers and
+// saved chats) lives in localStorage. Unlike sessionStorage it survives tab
+// closes, browser restarts and mobile tab eviction, and unlike a cookie it is
+// never attached to requests, so the API key is not leaked to the backend.
+// Credentials stay put until the user removes them or saves new ones.
+// ---------------------------------------------------------------------------
+const STORAGE_PREFIX = "dt_ai_";
+const CREDENTIALS_KEY = STORAGE_PREFIX + "credentials_v1";
+const CHATS_KEY = STORAGE_PREFIX + "chats_v1";
+
+// Written by older builds (credentials in sessionStorage, chats in cookies).
+// Read once for migration, then deleted.
+const LEGACY_ENDPOINT_KEY = STORAGE_PREFIX + "endpoint";
+const LEGACY_TOKEN_KEY = STORAGE_PREFIX + "token";
+const LEGACY_ENDPOINT_HEADERS_KEY = STORAGE_PREFIX + "endpoint_headers";
+const LEGACY_MODEL_HEADERS_KEY = STORAGE_PREFIX + "model_headers";
+const LEGACY_CHATS_INDEX_KEY = STORAGE_PREFIX + "chats";
+const LEGACY_CHAT_KEY = (id: string) => STORAGE_PREFIX + "chat_" + id;
+
+const MAX_STORED_CHAT_BYTES = 4_500_000; // localStorage holds ~5 MB per origin.
+
+interface StoredCredentials {
+  endpoint: string;
+  token: string;
+  endpointHeaders: CustomHeader[];
+  modelHeaders: Record<string, CustomHeader[]>;
+}
+
+function storageGet(store: "local" | "session", key: string): string | null {
+  try {
+    return (store === "local" ? window.localStorage : window.sessionStorage).getItem(key);
+  } catch {
+    return null;
+  }
+}
+
+function storageSet(key: string, value: string): boolean {
+  try {
+    window.localStorage.setItem(key, value);
+    return true;
+  } catch {
+    // Quota exceeded or storage unavailable (e.g. blocked private mode).
+    return false;
+  }
+}
+
+function storageRemove(store: "local" | "session", key: string): void {
+  try {
+    (store === "local" ? window.localStorage : window.sessionStorage).removeItem(key);
+  } catch {
+    /* ignore */
+  }
+}
 
 export interface CustomHeader {
   id: string;
@@ -83,41 +132,26 @@ interface BenchmarkResult {
   source: "usage" | "chunks";
 }
 
-function setCookie(name: string, value: string, days = 365) {
-  document.cookie = `${name}=${encodeURIComponent(value)}; path=/; max-age=${days * 86400}; SameSite=Lax`;
-}
-
+// Cookie helpers remain only so we can migrate away from (and clean up) the
+// legacy cookie store written by older builds.
 function getCookie(name: string) {
-  const match = document.cookie.match(new RegExp("(?:^|; )" + name + "=([^;]*)"));
-  return match ? decodeURIComponent(match[1] || "") : "";
+  try {
+    const pattern = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const match = document.cookie.match(new RegExp("(?:^|; )" + pattern + "=([^;]*)"));
+    if (!match) return "";
+    try {
+      return decodeURIComponent(match[1] || "");
+    } catch {
+      // Malformed encoding in a legacy cookie — fall back to the raw value.
+      return match[1] || "";
+    }
+  } catch {
+    return "";
+  }
 }
 
 function deleteCookie(name: string) {
   document.cookie = `${name}=; path=/; max-age=0; SameSite=Lax`;
-}
-
-// Credentials (endpoint URL, API key, custom headers) are kept in sessionStorage
-// rather than long-lived cookies so they are not readable by any script after the
-// tab closes and are never sent on cross-site requests.
-function setCredential(name: string, value: string) {
-  try { sessionStorage.setItem(name, value); } catch { /* ignore */ }
-  // Remove any legacy long-lived cookie left by older versions.
-  deleteCookie(name);
-}
-
-function getCredential(name: string): string {
-  try {
-    const existing = sessionStorage.getItem(name);
-    if (existing !== null) return existing;
-    // One-time migration from the legacy cookie store.
-    const legacy = getCookie(name);
-    if (legacy) {
-      try { sessionStorage.setItem(name, legacy); } catch { /* ignore */ }
-      deleteCookie(name);
-      return legacy;
-    }
-  } catch { /* ignore */ }
-  return "";
 }
 
 function makeId() {
@@ -125,52 +159,79 @@ function makeId() {
   return "chat_" + Math.random().toString(36).slice(2) + Date.now().toString(36);
 }
 
-function loadHeadersFromCookie(cookieName: string): CustomHeader[] {
-  const raw = getCredential(cookieName);
-  if (!raw) return [];
-  try {
-    const parsed = JSON.parse(raw);
-    if (Array.isArray(parsed)) {
-      return parsed
-        .filter((item): item is CustomHeader => item && typeof item === "object" && typeof item.key === "string")
-        .map((item) => ({
-          id: item.id || makeId(),
-          key: item.key || "",
-          value: typeof item.value === "string" ? item.value : "",
-          enabled: item.enabled !== false,
-        }));
-    }
-  } catch {
-    /* ignore */
-  }
-  return [];
+function normalizeHeaders(input: unknown): CustomHeader[] {
+  if (!Array.isArray(input)) return [];
+  return input
+    .filter((item): item is CustomHeader => !!item && typeof item === "object" && typeof (item as CustomHeader).key === "string")
+    .map((item) => ({
+      id: item.id || makeId(),
+      key: item.key || "",
+      value: typeof item.value === "string" ? item.value : "",
+      enabled: item.enabled !== false,
+    }));
 }
 
-function loadModelHeadersFromCookie(): Record<string, CustomHeader[]> {
-  const raw = getCredential(MODEL_HEADERS_COOKIE);
-  if (!raw) return {};
-  try {
-    const parsed = JSON.parse(raw);
-    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-      const result: Record<string, CustomHeader[]> = {};
-      for (const [modelId, headers] of Object.entries(parsed)) {
-        if (Array.isArray(headers)) {
-          result[modelId] = headers
-            .filter((item): item is CustomHeader => item && typeof item === "object" && typeof item.key === "string")
-            .map((item) => ({
-              id: item.id || makeId(),
-              key: item.key || "",
-              value: typeof item.value === "string" ? item.value : "",
-              enabled: item.enabled !== false,
-            }));
-        }
-      }
-      return result;
-    }
-  } catch {
-    /* ignore */
+function normalizeModelHeaders(input: unknown): Record<string, CustomHeader[]> {
+  if (!input || typeof input !== "object" || Array.isArray(input)) return {};
+  const result: Record<string, CustomHeader[]> = {};
+  for (const [modelId, headers] of Object.entries(input as Record<string, unknown>)) {
+    const normalized = normalizeHeaders(headers);
+    if (normalized.length) result[modelId] = normalized;
   }
-  return {};
+  return result;
+}
+
+function parseJson(raw: string | null): unknown {
+  if (!raw) return null;
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+}
+
+/** Reads credentials left behind by older builds (sessionStorage + legacy cookies). */
+function readLegacyCredentials(): StoredCredentials {
+  const sessionOrCookie = (key: string) => storageGet("session", key) ?? (getCookie(key) || null);
+  return {
+    endpoint: sessionOrCookie(LEGACY_ENDPOINT_KEY) || "",
+    token: sessionOrCookie(LEGACY_TOKEN_KEY) || "",
+    endpointHeaders: normalizeHeaders(parseJson(sessionOrCookie(LEGACY_ENDPOINT_HEADERS_KEY))),
+    modelHeaders: normalizeModelHeaders(parseJson(sessionOrCookie(LEGACY_MODEL_HEADERS_KEY))),
+  };
+}
+
+function clearLegacyCredentials() {
+  for (const key of [LEGACY_ENDPOINT_KEY, LEGACY_TOKEN_KEY, LEGACY_ENDPOINT_HEADERS_KEY, LEGACY_MODEL_HEADERS_KEY]) {
+    storageRemove("session", key);
+    deleteCookie(key);
+  }
+}
+
+/** Loads saved credentials. Read-only: nothing is written during render. The
+ *  mount effect persists any legacy data it finds here and clears the old
+ *  stores, so a failed write can never destroy the legacy copy. */
+function loadCredentials(): StoredCredentials {
+  const parsed = parseJson(storageGet("local", CREDENTIALS_KEY));
+  if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+    const record = parsed as Partial<StoredCredentials>;
+    return {
+      endpoint: typeof record.endpoint === "string" ? record.endpoint : "",
+      token: typeof record.token === "string" ? record.token : "",
+      endpointHeaders: normalizeHeaders(record.endpointHeaders),
+      modelHeaders: normalizeModelHeaders(record.modelHeaders),
+    };
+  }
+  return readLegacyCredentials();
+}
+
+function saveCredentials(credentials: StoredCredentials): boolean {
+  return storageSet(CREDENTIALS_KEY, JSON.stringify(credentials));
+}
+
+function removeStoredCredentials() {
+  storageRemove("local", CREDENTIALS_KEY);
+  clearLegacyCredentials();
 }
 
 function buildHeaderRecord(headers: CustomHeader[]): Record<string, string> {
@@ -211,25 +272,71 @@ function combineHeaders(
   return headers;
 }
 
-function loadChatsFromCookies(): SavedChat[] {
-  const indexRaw = getCookie(CHATS_INDEX_COOKIE);
-  let ids: string[] = [];
-  try {
-    const parsed = JSON.parse(indexRaw || "[]");
-    if (Array.isArray(parsed)) ids = parsed;
-  } catch {
-    /* ignore */
-  }
-  const loaded: SavedChat[] = [];
-  for (const id of ids) {
-    try {
-      const chat = JSON.parse(getCookie(CHAT_COOKIE(id))) as SavedChat;
-      if (chat && chat.id && Array.isArray(chat.messages)) loaded.push(chat);
-    } catch {
-      /* skip corrupt chat */
+function isValidChat(chat: unknown): chat is SavedChat {
+  return (
+    !!chat &&
+    typeof chat === "object" &&
+    typeof (chat as SavedChat).id === "string" &&
+    Array.isArray((chat as SavedChat).messages)
+  );
+}
+
+/** Reads chats left in cookies by older builds. Does not delete them — that
+ *  only happens once the migrated copy has been written successfully. */
+function readLegacyChats(): SavedChat[] {
+  const index = parseJson(getCookie(LEGACY_CHATS_INDEX_KEY));
+  const chats: SavedChat[] = [];
+  if (Array.isArray(index)) {
+    for (const id of index) {
+      if (typeof id !== "string") continue;
+      const parsed = parseJson(getCookie(LEGACY_CHAT_KEY(id)));
+      if (isValidChat(parsed)) chats.push(parsed);
     }
   }
-  return loaded;
+  return chats;
+}
+
+/** Removes the legacy per-chat cookies left by older builds. */
+function clearLegacyChats() {
+  const index = parseJson(getCookie(LEGACY_CHATS_INDEX_KEY));
+  if (Array.isArray(index)) {
+    for (const id of index) {
+      if (typeof id === "string") deleteCookie(LEGACY_CHAT_KEY(id));
+    }
+  }
+  deleteCookie(LEGACY_CHATS_INDEX_KEY);
+}
+
+/** Loads saved chats from localStorage. Read-only: the mount effect migrates
+ *  any legacy cookie chats and cleans up the old cookies. */
+function loadChats(): SavedChat[] {
+  const parsed = parseJson(storageGet("local", CHATS_KEY));
+  if (Array.isArray(parsed)) return parsed.filter(isValidChat);
+  return readLegacyChats();
+}
+
+function saveChats(chats: SavedChat[]): boolean {
+  return storageSet(CHATS_KEY, JSON.stringify(chats));
+}
+
+/** Replaces inline image data with a short marker before persisting. A single
+ *  4 MB screenshot becomes ~5 MB of base64, which on its own would exhaust the
+ *  origin's storage quota and stop credential writes too. Returns the original
+ *  array when nothing needed stripping. */
+function stripEmbeddedImages(messages: ChatMessage[]): ChatMessage[] {
+  let changed = false;
+  const next = messages.map((message) => {
+    if (typeof message.content === "string") return message;
+    if (!message.content.some((part) => part.type === "image_url")) return message;
+    changed = true;
+    const text = message.content
+      .filter((part): part is { type: "text"; text: string } => part.type === "text")
+      .map((part) => part.text)
+      .join(" ")
+      .trim();
+    return { role: message.role, content: text ? `${text}\n\n_[image not saved]_` : "_[image not saved]_" };
+  });
+  return changed ? next : messages;
 }
 
 function getErrorMessage(e: unknown) {
@@ -239,6 +346,7 @@ function getErrorMessage(e: unknown) {
 }
 
 const MAX_IMAGE_MB = 4;
+const CONNECT_TIMEOUT_MS = 20_000;
 
 function readImageData(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -298,10 +406,16 @@ function escapeHtml(str: string) {
   return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
-async function fetchModels(endpoint: string, token: string, customHeaders?: CustomHeader[]): Promise<ModelInfo[]> {
+async function fetchModels(
+  endpoint: string,
+  token: string,
+  customHeaders?: CustomHeader[],
+  signal?: AbortSignal,
+): Promise<ModelInfo[]> {
   const headers = combineHeaders(token, customHeaders || []);
   const res = await fetch(endpoint + "/models", {
     headers,
+    signal,
   });
   if (!res.ok) {
     let message = `Request failed (${res.status})`;
@@ -382,19 +496,10 @@ async function streamSSE(
 }
 
 function MarkdownContent({ content }: { content: string }) {
-  const [html, setHtml] = useState("");
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      const raw = escapeHtml(content);
-      const parsed = (await Promise.resolve(marked.parse(raw))) as string;
-      const safe = parsed.replace(/href="(javascript|data):[^"]*"/gi, 'href="#"');
-      if (!cancelled) setHtml(safe);
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [content]);
+  // Parse and sanitize with the shared DOMPurify helper rather than a bespoke
+  // regex, so dangerous URLs/handlers can't slip through. Computed during
+  // render so streaming updates paint without an extra state round-trip.
+  const html = useMemo(() => sanitizeHtml(marked.parse(escapeHtml(content)) as string), [content]);
 
   return (
     <div
@@ -480,6 +585,7 @@ function HeadersEditor({
           <button
             type="button"
             onClick={() => addHeader()}
+            className="dt-hdr-btn"
             style={{
               display: "inline-flex",
               alignItems: "center",
@@ -500,7 +606,8 @@ function HeadersEditor({
               type="button"
               onClick={onClose}
               title="Close headers editor"
-              aria-label="Close"
+              aria-label="Close headers editor"
+              className="dt-hdr-btn"
               style={{
                 background: "transparent",
                 border: "none",
@@ -508,6 +615,8 @@ function HeadersEditor({
                 cursor: "pointer",
                 padding: 2,
                 display: "inline-flex",
+                alignItems: "center",
+                justifyContent: "center",
               }}
             >
               <X size={14} />
@@ -544,6 +653,7 @@ function HeadersEditor({
                 key={preset.key}
                 type="button"
                 onClick={() => addHeader(preset.key, "")}
+                className="dt-hdr-btn"
                 style={{
                   padding: "2px 6px",
                   fontSize: "11px",
@@ -565,9 +675,11 @@ function HeadersEditor({
           {headers.map((h) => (
             <div
               key={h.id}
+              className="dt-hdr-row"
               style={{
                 display: "flex",
                 alignItems: "center",
+                flexWrap: "wrap",
                 gap: "var(--dt-space-2)",
                 opacity: h.enabled ? 1 : 0.6,
               }}
@@ -577,6 +689,8 @@ function HeadersEditor({
                 checked={h.enabled}
                 onChange={(e) => updateHeader(h.id, { enabled: e.target.checked })}
                 title={h.enabled ? "Disable header" : "Enable header"}
+                aria-label={`${h.enabled ? "Disable" : "Enable"} header ${h.key || ""}`.trim()}
+                className="dt-hdr-check"
                 style={{ cursor: "pointer", accentColor: "var(--dt-accent-primary)" }}
               />
               <input
@@ -584,9 +698,14 @@ function HeadersEditor({
                 value={h.key}
                 onChange={(e) => updateHeader(h.id, { key: e.target.value })}
                 placeholder="Header Name (e.g. HTTP-Referer)"
+                aria-label="Header name"
                 spellCheck={false}
+                autoComplete="off"
+                autoCapitalize="none"
+                className="dt-hdr-input"
                 style={{
                   flex: 1,
+                  minWidth: 0,
                   boxSizing: "border-box",
                   minHeight: "32px",
                   padding: "4px var(--dt-space-2)",
@@ -604,9 +723,14 @@ function HeadersEditor({
                 value={h.value}
                 onChange={(e) => updateHeader(h.id, { value: e.target.value })}
                 placeholder="Header Value"
+                aria-label="Header value"
                 spellCheck={false}
+                autoComplete="off"
+                autoCapitalize="none"
+                className="dt-hdr-input"
                 style={{
                   flex: 1.5,
+                  minWidth: 0,
                   boxSizing: "border-box",
                   minHeight: "32px",
                   padding: "4px var(--dt-space-2)",
@@ -624,6 +748,7 @@ function HeadersEditor({
                 onClick={() => removeHeader(h.id)}
                 title="Remove header"
                 aria-label="Remove header"
+                className="dt-hdr-btn"
                 style={{
                   minWidth: "28px",
                   height: "28px",
@@ -695,25 +820,29 @@ function OpenAIPlayground() {
   const isMobile = useIsMobile();
   const availableHeight = useAvailableHeight();
 
-  const [endpoint, setEndpoint] = useState(() => getCredential(ENDPOINT_COOKIE));
-  const [token, setToken] = useState(() => getCredential(TOKEN_COOKIE));
-  const [endpointHeaders, setEndpointHeaders] = useState<CustomHeader[]>(() =>
-    loadHeadersFromCookie(ENDPOINT_HEADERS_COOKIE),
-  );
-  const [modelHeadersMap, setModelHeadersMap] = useState<Record<string, CustomHeader[]>>(() =>
-    loadModelHeadersFromCookie(),
+  // Credentials are read from localStorage once at mount; later edits are
+  // committed by commitCredentials() (blur / header change / connect / page-hide).
+  const [initialCredentials] = useState(loadCredentials);
+
+  const [endpoint, setEndpoint] = useState(initialCredentials.endpoint);
+  const [token, setToken] = useState(initialCredentials.token);
+  const [endpointHeaders, setEndpointHeaders] = useState<CustomHeader[]>(initialCredentials.endpointHeaders);
+  const [modelHeadersMap, setModelHeadersMap] = useState<Record<string, CustomHeader[]>>(
+    initialCredentials.modelHeaders,
   );
   const [showEndpointHeaders, setShowEndpointHeaders] = useState(false);
   const [showModelHeaders, setShowModelHeaders] = useState(false);
+  const [connectionExpanded, setConnectionExpanded] = useState(false);
+  const [confirmRemove, setConfirmRemove] = useState(false);
 
   const [status, setStatus] = useState<"idle" | "connecting" | "connected" | "error">(() =>
-    getCredential(ENDPOINT_COOKIE) && getCredential(TOKEN_COOKIE) ? "connecting" : "idle",
+    initialCredentials.endpoint.trim() && initialCredentials.token.trim() ? "connecting" : "idle",
   );
   const [statusMessage, setStatusMessage] = useState("");
   const [connectedEndpoint, setConnectedEndpoint] = useState("");
   const [connectedToken, setConnectedToken] = useState("");
-  const [connectedEndpointHeaders, setConnectedEndpointHeaders] = useState<CustomHeader[]>(() =>
-    loadHeadersFromCookie(ENDPOINT_HEADERS_COOKIE),
+  const [connectedEndpointHeaders, setConnectedEndpointHeaders] = useState<CustomHeader[]>(
+    initialCredentials.endpointHeaders,
   );
 
   const [models, setModels] = useState<ModelInfo[]>([]);
@@ -725,7 +854,7 @@ function OpenAIPlayground() {
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
-  const [chats, setChats] = useState<SavedChat[]>(loadChatsFromCookies);
+  const [chats, setChats] = useState<SavedChat[]>(loadChats);
   const [activeChat, setActiveChat] = useState<SavedChat | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
 
@@ -745,19 +874,192 @@ function OpenAIPlayground() {
   const autoConnectDoneRef = useRef(false);
   const streamTextRef = useRef("");
   const messagesContainerRef = useRef<HTMLDivElement | null>(null);
+  const chatPanelRef = useRef<HTMLDivElement | null>(null);
+  const connectAbortRef = useRef<AbortController | null>(null);
+  const connectEpochRef = useRef(0);
+  const lastConnectedRef = useRef<{ endpoint: string; token: string; headers: CustomHeader[] } | null>(null);
+  const streamFrameRef = useRef<number | null>(null);
+  const benchmarkFrameRef = useRef<number | null>(null);
+  const focusRevealTimerRef = useRef<number | null>(null);
+  const [credentialsStored, setCredentialsStored] = useState(() =>
+    Boolean(
+      initialCredentials.endpoint.trim() ||
+        initialCredentials.token.trim() ||
+        initialCredentials.endpointHeaders.length ||
+        Object.keys(initialCredentials.modelHeaders).length,
+    ),
+  );
+  const [credentialError, setCredentialError] = useState("");
+  const [chatError, setChatError] = useState("");
 
   const currentModelHeaders = selectedModel ? modelHeadersMap[selectedModel] || [] : [];
+  const hasSavedCredentials =
+    Boolean(endpoint.trim() || token.trim() || endpointHeaders.length || Object.keys(modelHeadersMap).length);
+  // Removing credentials should be possible whenever a record exists in
+  // storage, even if the in-memory fields are empty (e.g. a stale connect).
+  const canRemoveCredentials = credentialsStored || hasSavedCredentials;
+
+  // Live mirror of the credential fields so a flush on page-hide can read the
+  // latest typed values without re-subscribing on every keystroke.
+  const credentialsRef = useRef({ endpoint, token, endpointHeaders, modelHeadersMap });
+  useEffect(() => {
+    credentialsRef.current = { endpoint, token, endpointHeaders, modelHeadersMap };
+  }, [endpoint, token, endpointHeaders, modelHeadersMap]);
+
+  /**
+   * Writes the current credentials to localStorage. Called when a field is
+   * committed (blur), when headers change, when a connection succeeds, and when
+   * the page is hidden. Deliberately NOT called on every keystroke: that would
+   * overwrite a working API key with a half-typed replacement.
+   */
+  function commitCredentials(): boolean {
+    const { endpoint: ep, token: tk, endpointHeaders: eh, modelHeadersMap: mh } = credentialsRef.current;
+    const empty = !ep.trim() && !tk.trim() && eh.length === 0 && Object.keys(mh).length === 0;
+    if (empty) {
+      // Never treat blanked-out fields as a removal: the user clearing a field
+      // to paste a new value (often while switching windows, which triggers the
+      // flush) must not wipe the saved credential. Removal is only ever the
+      // explicit Remove-credentials action.
+      setCredentialError("");
+      return true;
+    }
+    const saved = saveCredentials({ endpoint: ep, token: tk, endpointHeaders: eh, modelHeaders: mh });
+    setCredentialsStored(saved);
+    setCredentialError(
+      saved
+        ? ""
+        : "Couldn't save credentials — browser storage is unavailable or full. Free up space (delete saved chats) or check browser settings, then try again.",
+    );
+    return saved;
+  }
+
+  // Flush pending edits when the tab is hidden or closed so nothing typed is
+  // lost, while still avoiding a write per keystroke.
+  useEffect(() => {
+    const flush = () => commitCredentials();
+    const onVisibilityChange = () => {
+      if (document.visibilityState === "hidden") commitCredentials();
+    };
+    window.addEventListener("pagehide", flush);
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    return () => {
+      window.removeEventListener("pagehide", flush);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+      // Client-side navigation unmounts without pagehide/visibilitychange, so
+      // flush directly (without setState) to avoid losing an unblurred edit.
+      const { endpoint: ep, token: tk, endpointHeaders: eh, modelHeadersMap: mh } = credentialsRef.current;
+      if (ep.trim() || tk.trim() || eh.length || Object.keys(mh).length) {
+        saveCredentials({ endpoint: ep, token: tk, endpointHeaders: eh, modelHeaders: mh });
+      }
+    };
+  }, []);
+
+  // One-time migration: persist anything loaded from the legacy stores, then
+  // drop the old keys/cookies. Guarded so legacy data is only cleared after the
+  // new copy is safely written, and idempotent so a StrictMode double-run or a
+  // remount cannot lose data.
+  useEffect(() => {
+    if (commitCredentials()) clearLegacyCredentials();
+    // Persist legacy cookie chats only if the new store has not been created
+    // yet, and keep the legacy cookies until that write succeeds.
+    const chatsPersisted = storageGet("local", CHATS_KEY) !== null;
+    if (!chatsPersisted && chats.length > 0) {
+      if (saveChats(chats)) clearLegacyChats();
+    } else {
+      clearLegacyChats();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Keep other tabs in sync. Values (not timestamps) are compared so two tabs
+  // converge instead of ping-ponging writes at each other.
+  useEffect(() => {
+    const onStorage = (event: StorageEvent) => {
+      // Another tab cleared storage entirely.
+      if (event.key === null) {
+        connectEpochRef.current += 1;
+        lastConnectedRef.current = null;
+        setEndpoint("");
+        setToken("");
+        setEndpointHeaders([]);
+        setModelHeadersMap({});
+        setCredentialsStored(false);
+        setConnectedEndpoint("");
+        setConnectedToken("");
+        setConnectedEndpointHeaders([]);
+        setModels([]);
+        setModelsLoading(false);
+        setSelectedModel("");
+        setStatus("idle");
+        setStatusMessage("");
+        setChats(loadChats());
+        return;
+      }
+      // Keep saved chats in sync so a stale tab cannot overwrite another tab's
+      // saved chat on its next write.
+      if (event.key === CHATS_KEY) {
+        setChats(loadChats());
+        return;
+      }
+      if (event.key !== CREDENTIALS_KEY) return;
+      const next = loadCredentials();
+      const hasAny = Boolean(
+        next.endpoint.trim() || next.token.trim() || next.endpointHeaders.length || Object.keys(next.modelHeaders).length,
+      );
+      setEndpoint((prev) => (prev === next.endpoint ? prev : next.endpoint));
+      setToken((prev) => (prev === next.token ? prev : next.token));
+      setEndpointHeaders((prev) =>
+        JSON.stringify(prev) === JSON.stringify(next.endpointHeaders) ? prev : next.endpointHeaders,
+      );
+      setModelHeadersMap((prev) =>
+        JSON.stringify(prev) === JSON.stringify(next.modelHeaders) ? prev : next.modelHeaders,
+      );
+      setCredentialsStored(hasAny);
+      // If another tab removed the credentials, drop this tab's live connection
+      // too so it cannot keep using a key that no longer exists.
+      if (!hasAny) {
+        connectEpochRef.current += 1;
+        connectAbortRef.current?.abort();
+        connectAbortRef.current = null;
+        lastConnectedRef.current = null;
+        setConnectedEndpoint("");
+        setConnectedToken("");
+        setConnectedEndpointHeaders([]);
+        setModels([]);
+        setModelsLoading(false);
+        setSelectedModel("");
+        setStatus("idle");
+        setStatusMessage("");
+      }
+    };
+    window.addEventListener("storage", onStorage);
+    return () => window.removeEventListener("storage", onStorage);
+  }, []);
+
+  const headerCommitTimerRef = useRef<number | null>(null);
+  /** Debounces header commits so typing a header value does not write to
+   *  localStorage on every keystroke. The page-hide/unmount flush covers the
+   *  pending write. */
+  function scheduleCommitCredentials() {
+    if (headerCommitTimerRef.current !== null) window.clearTimeout(headerCommitTimerRef.current);
+    headerCommitTimerRef.current = window.setTimeout(() => {
+      headerCommitTimerRef.current = null;
+      commitCredentials();
+    }, 300);
+  }
 
   function handleEndpointHeadersChange(next: CustomHeader[]) {
     setEndpointHeaders(next);
     setConnectedEndpointHeaders(next);
-    setCredential(ENDPOINT_HEADERS_COOKIE, JSON.stringify(next));
+    credentialsRef.current = { ...credentialsRef.current, endpointHeaders: next };
+    scheduleCommitCredentials();
   }
 
   function handleModelHeadersChange(modelId: string, next: CustomHeader[]) {
     const updated = { ...modelHeadersMap, [modelId]: next };
     setModelHeadersMap(updated);
-    setCredential(MODEL_HEADERS_COOKIE, JSON.stringify(updated));
+    credentialsRef.current = { ...credentialsRef.current, modelHeadersMap: updated };
+    scheduleCommitCredentials();
   }
 
   useEffect(() => {
@@ -768,12 +1070,11 @@ function OpenAIPlayground() {
   useEffect(() => {
     if (autoConnectDoneRef.current) return;
     autoConnectDoneRef.current = true;
-    const savedEndpoint = getCredential(ENDPOINT_COOKIE);
-    const savedToken = getCredential(TOKEN_COOKIE);
-    const savedHeaders = loadHeadersFromCookie(ENDPOINT_HEADERS_COOKIE);
-    if (savedEndpoint && savedToken) {
-      void connectWith(savedEndpoint, savedToken, savedHeaders);
+    if (endpoint.trim() && token.trim()) {
+      void connectWith(endpoint, token, endpointHeaders);
     }
+    // Intentionally runs once on mount with the credentials loaded at mount.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   async function connectWith(ep: string, tk: string, epHeaders: CustomHeader[] = endpointHeaders) {
@@ -784,28 +1085,63 @@ function OpenAIPlayground() {
       setStatusMessage("Both endpoint URL and API key are required.");
       return;
     }
+
+    // Supersede any in-flight attempt and stamp this one, so a slow response
+    // can never resurrect credentials after the user removed them.
+    connectAbortRef.current?.abort();
+    const controller = new AbortController();
+    connectAbortRef.current = controller;
+    const epoch = ++connectEpochRef.current;
+    let timedOut = false;
+    const timeout = window.setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+    }, CONNECT_TIMEOUT_MS);
+    const isStale = () => epoch !== connectEpochRef.current;
+
     setStatus("connecting");
     setStatusMessage("Contacting endpoint...");
     try {
-      const data = await fetchModels(cleanEp, cleanTk, epHeaders);
+      const data = await fetchModels(cleanEp, cleanTk, epHeaders, controller.signal);
+      if (isStale()) return;
       setModels(data);
       setConnectedEndpoint(cleanEp);
       setConnectedToken(cleanTk);
       setConnectedEndpointHeaders(epHeaders);
-      setCredential(ENDPOINT_COOKIE, cleanEp);
-      setCredential(TOKEN_COOKIE, cleanTk);
-      setCredential(ENDPOINT_HEADERS_COOKIE, JSON.stringify(epHeaders));
+      lastConnectedRef.current = { endpoint: cleanEp, token: cleanTk, headers: epHeaders };
+      // Merge into the live ref instead of replacing it: header edits made while
+      // the connect was in flight must not be reverted in storage.
+      credentialsRef.current = { ...credentialsRef.current, endpoint: cleanEp, token: cleanTk };
+      const saved = commitCredentials();
       setStatus("connected");
       setStatusMessage(`Connected — ${data.length} model${data.length === 1 ? "" : "s"} available`);
       setError("");
       setNotice(
-        "Endpoint, API key, and custom headers are kept in session storage for this tab and are cleared when you close it. Anything sent to the model leaves this page — treat credentials as sensitive.",
+        saved
+          ? "Credentials saved in this browser and kept until you remove them."
+          : "Connected, but credentials could not be saved — browser storage is unavailable or full.",
       );
     } catch (e: unknown) {
+      if (isStale()) return;
+      // Any settled attempt leaves no live connection, so the UI cannot keep
+      // sending to a stale endpoint while showing a failed connect.
+      lastConnectedRef.current = null;
       setConnectedEndpoint("");
       setConnectedToken("");
       setStatus("error");
-      setStatusMessage(getErrorMessage(e));
+      setStatusMessage(
+        e instanceof Error && e.name === "AbortError" && timedOut
+          ? `Connection timed out after ${CONNECT_TIMEOUT_MS / 1000}s. Check the endpoint URL and try again.`
+          : getErrorMessage(e),
+      );
+    } finally {
+      window.clearTimeout(timeout);
+      // A connect supersedes any in-flight refresh and owns the loading flag;
+      // release it only if no newer request has taken the controller.
+      if (connectAbortRef.current === controller) {
+        connectAbortRef.current = null;
+        setModelsLoading(false);
+      }
     }
   }
 
@@ -813,20 +1149,112 @@ function OpenAIPlayground() {
     void connectWith(endpoint, token, endpointHeaders);
   }
 
+  /** Cancels an in-flight connection attempt, reverting to the last live
+   *  connection if there was one. Restoring the endpoint/key too (not just the
+   *  status) keeps the connection state and the UI in agreement, so Send and
+   *  Benchmark keep working against the endpoint that is actually live. */
+  function cancelConnect() {
+    connectEpochRef.current += 1;
+    connectAbortRef.current?.abort();
+    connectAbortRef.current = null;
+    setError("");
+    setModelsLoading(false);
+    const last = lastConnectedRef.current;
+    if (last) {
+      // Revert inputs, stored credential and active transport together, so a
+      // cancelled change does not leave storage pointing at an unverified
+      // endpoint while the live connection still uses the old one.
+      setEndpoint(last.endpoint);
+      setToken(last.token);
+      setEndpointHeaders(last.headers);
+      setConnectedEndpoint(last.endpoint);
+      setConnectedToken(last.token);
+      setConnectedEndpointHeaders(last.headers);
+      credentialsRef.current = {
+        ...credentialsRef.current,
+        endpoint: last.endpoint,
+        token: last.token,
+        endpointHeaders: last.headers,
+      };
+      commitCredentials();
+      setStatus("connected");
+      setStatusMessage("");
+    } else {
+      setStatus("idle");
+      setStatusMessage("");
+    }
+  }
+
+  /** Clears every saved credential from the browser and resets the connection. */
+  function removeCredentials() {
+    abortRef.current?.abort();
+    benchmarkAbortRef.current?.abort();
+    // Invalidate and cancel any in-flight connect so it cannot write the
+    // just-removed credentials back into storage.
+    connectEpochRef.current += 1;
+    connectAbortRef.current?.abort();
+    connectAbortRef.current = null;
+    lastConnectedRef.current = null;
+    removeStoredCredentials();
+    credentialsRef.current = { endpoint: "", token: "", endpointHeaders: [], modelHeadersMap: {} };
+    setEndpoint("");
+    setToken("");
+    setEndpointHeaders([]);
+    setModelHeadersMap({});
+    setShowEndpointHeaders(false);
+    setShowModelHeaders(false);
+    setConnectedEndpoint("");
+    setConnectedToken("");
+    setConnectedEndpointHeaders([]);
+    setModels([]);
+    setModelsLoading(false);
+    setSelectedModel("");
+    setStatus("idle");
+    setStatusMessage("");
+    setError("");
+    setCredentialError("");
+    setCredentialsStored(false);
+    setConfirmRemove(false);
+    setConnectionExpanded(true);
+    setNotice("Saved credentials removed from this browser.");
+  }
+
   async function refreshModels() {
     if (!connectedEndpoint || !connectedToken) return;
+    // Share the connect abort/epoch discipline so a refresh that lands after
+    // the credentials were removed cannot rebuild the "connected" UI.
+    const epoch = ++connectEpochRef.current;
+    const isStale = () => epoch !== connectEpochRef.current;
+    connectAbortRef.current?.abort();
+    const controller = new AbortController();
+    connectAbortRef.current = controller;
+    let timedOut = false;
+    const timeout = window.setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+    }, CONNECT_TIMEOUT_MS);
+
     setModelsLoading(true);
     try {
-      const data = await fetchModels(connectedEndpoint, connectedToken, connectedEndpointHeaders);
+      const data = await fetchModels(connectedEndpoint, connectedToken, connectedEndpointHeaders, controller.signal);
+      if (isStale()) return;
       setModels(data);
       setStatus("connected");
       setStatusMessage(`Connected — ${data.length} model${data.length === 1 ? "" : "s"} available`);
       setError("");
     } catch (e: unknown) {
+      if (isStale()) return;
+      if (e instanceof Error && e.name === "AbortError" && timedOut) {
+        setStatus("error");
+        setStatusMessage("Refreshing models timed out. Try again.");
+        return;
+      }
       setStatus("error");
       setStatusMessage(getErrorMessage(e));
     } finally {
-      setModelsLoading(false);
+      window.clearTimeout(timeout);
+      if (connectAbortRef.current === controller) connectAbortRef.current = null;
+      if (!isStale()) setModelsLoading(false);
     }
   }
 
@@ -852,6 +1280,7 @@ function OpenAIPlayground() {
     setBenchmarkPrompt("");
     setBenchmarkOutput("");
     benchmarkOutputRef.current = "";
+    scrollChatIntoView();
   }
 
   function newChat() {
@@ -878,7 +1307,39 @@ function OpenAIPlayground() {
     setBenchmarkPrompt("");
     setBenchmarkOutput("");
     benchmarkOutputRef.current = "";
+    scrollChatIntoView();
   }
+
+  /** On phones the model list and the chat live in separate panes, so bring the
+   *  chat pane into view once the user picks a model or opens a saved chat. */
+  function scrollChatIntoView() {
+    if (!isMobile) return;
+    const reduceMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+    window.requestAnimationFrame(() => {
+      chatPanelRef.current?.scrollIntoView({ behavior: reduceMotion ? "auto" : "smooth", block: "start" });
+    });
+  }
+
+  /** Brings the composer into view after the soft keyboard resizes the viewport,
+   *  cancelling any previously queued reveal. */
+  function revealComposer() {
+    cancelComposerReveal();
+    if (!isMobile) return;
+    const reduceMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+    focusRevealTimerRef.current = window.setTimeout(() => {
+      focusRevealTimerRef.current = null;
+      chatPanelRef.current?.scrollIntoView({ block: "end", behavior: reduceMotion ? "auto" : "smooth" });
+    }, 250);
+  }
+
+  function cancelComposerReveal() {
+    if (focusRevealTimerRef.current !== null) {
+      window.clearTimeout(focusRevealTimerRef.current);
+      focusRevealTimerRef.current = null;
+    }
+  }
+
+  useEffect(() => cancelComposerReveal, []);
 
   function saveCurrentChat() {
     if (!activeChat) return;
@@ -886,31 +1347,41 @@ function OpenAIPlayground() {
       activeChat.title === "New chat"
         ? (contentText(messages[0]?.content || "") || "Image chat").slice(0, 42)
         : activeChat.title;
-    const chat: SavedChat = { ...activeChat, title, messages };
-    const serialized = JSON.stringify(chat);
-    const sizeKb = (encodeURIComponent(serialized).length / 1024).toFixed(1);
 
-    const exists = chats.some((c) => c.id === chat.id);
-    const next = exists ? chats.map((c) => (c.id === chat.id ? chat : c)) : [...chats, chat];
+    const persistMessages = stripEmbeddedImages(messages);
+    const stored: SavedChat = { ...activeChat, title, messages: persistMessages };
+    const inMemory: SavedChat = { ...activeChat, title, messages };
+
+    const exists = chats.some((c) => c.id === stored.id);
+    const next = exists ? chats.map((c) => (c.id === stored.id ? stored : c)) : [...chats, stored];
+    const serialized = JSON.stringify(next);
+
+    if (!saveChats(next)) {
+      setChatError("Couldn't save this chat — browser storage is unavailable or full. Delete a saved chat and try again.");
+      return;
+    }
+    setChatError("");
     setChats(next);
-    setActiveChat(chat);
-    setCookie(CHAT_COOKIE(chat.id), serialized);
-    setCookie(CHATS_INDEX_COOKIE, JSON.stringify(next.map((c) => c.id)));
-
-    if (encodeURIComponent(serialized).length > MAX_COOKIE_CHARS) {
-      setNotice(
-        `Chat saved but is ~${sizeKb} KB — this may exceed browser cookie limits and could be truncated. Export it soon.`,
-      );
+    setActiveChat(inMemory);
+    if (serialized.length > MAX_STORED_CHAT_BYTES) {
+      setNotice("Chat saved, but storage is nearly full — delete chats you no longer need.");
+    } else if (persistMessages !== messages) {
+      setNotice("Chat saved without images — attachments are not persisted to keep credentials safe.");
     } else {
-      setNotice("Chat saved to cookies.");
+      setNotice("Chat saved in this browser.");
     }
   }
 
   function deleteChat(id: string) {
     const next = chats.filter((c) => c.id !== id);
+    // Only update the UI once storage agrees, so a failed write cannot make a
+    // deleted chat silently reappear on reload.
+    if (!saveChats(next)) {
+      setChatError("Couldn't delete this chat — browser storage is unavailable. It may reappear on reload.");
+      return;
+    }
+    setChatError("");
     setChats(next);
-    deleteCookie(CHAT_COOKIE(id));
-    setCookie(CHATS_INDEX_COOKIE, JSON.stringify(next.map((c) => c.id)));
     if (activeChat?.id === id) {
       setActiveChat(null);
       setMessages([]);
@@ -920,6 +1391,24 @@ function OpenAIPlayground() {
 
   function setStreamTextRef(value: string) {
     streamTextRef.current = value;
+  }
+
+  // Coalesce streaming deltas to one paint per animation frame: re-parsing the
+  // whole growing message on every token is the main source of jank on phones.
+  function scheduleStreamPaint() {
+    if (streamFrameRef.current !== null) return;
+    streamFrameRef.current = window.requestAnimationFrame(() => {
+      streamFrameRef.current = null;
+      setStreamText(streamTextRef.current);
+    });
+  }
+
+  function scheduleBenchmarkPaint() {
+    if (benchmarkFrameRef.current !== null) return;
+    benchmarkFrameRef.current = window.requestAnimationFrame(() => {
+      benchmarkFrameRef.current = null;
+      setBenchmarkOutput(benchmarkOutputRef.current);
+    });
   }
 
   async function sendMessage() {
@@ -963,7 +1452,7 @@ function OpenAIPlayground() {
           const delta = choices?.[0]?.delta?.content;
           if (typeof delta === "string") {
             streamTextRef.current += delta;
-            setStreamText(streamTextRef.current);
+            scheduleStreamPaint();
           }
         },
         controller.signal,
@@ -980,6 +1469,10 @@ function OpenAIPlayground() {
         setError(getErrorMessage(e));
       }
     } finally {
+      if (streamFrameRef.current !== null) {
+        window.cancelAnimationFrame(streamFrameRef.current);
+        streamFrameRef.current = null;
+      }
       setIsStreaming(false);
       setStreamText("");
       setStreamTextRef("");
@@ -1049,7 +1542,7 @@ function OpenAIPlayground() {
             if (firstTokenMs === 0) firstTokenMs = nowMs() - start;
             chunkTokens += 1;
             benchmarkOutputRef.current += delta;
-            setBenchmarkOutput(benchmarkOutputRef.current);
+            scheduleBenchmarkPaint();
           }
           const usage = payload.usage as { completion_tokens?: number } | undefined;
           if (usage?.completion_tokens) usageTokens = usage.completion_tokens;
@@ -1074,6 +1567,13 @@ function OpenAIPlayground() {
         setError("Benchmark failed: " + getErrorMessage(e));
       }
     } finally {
+      // Flush the last un-painted tokens before cancelling the frame, so the
+      // benchmark transcript is never truncated.
+      setBenchmarkOutput(benchmarkOutputRef.current);
+      if (benchmarkFrameRef.current !== null) {
+        window.cancelAnimationFrame(benchmarkFrameRef.current);
+        benchmarkFrameRef.current = null;
+      }
       setIsBenchmarking(false);
       benchmarkAbortRef.current = null;
     }
@@ -1099,63 +1599,77 @@ function OpenAIPlayground() {
     <div style={{ display: "flex", flexDirection: "column", gap: "var(--dt-space-3)" }}>
       <div style={{ display: "flex", gap: "var(--dt-space-3)", flexWrap: "wrap" }}>
         <div style={{ flex: isMobile ? "1 1 100%" : 1, minWidth: isMobile ? "100%" : "220px" }}>
-          <label style={{ fontSize: "var(--dt-text-xs)", color: "var(--dt-text-secondary)", display: "block", marginBottom: "var(--dt-space-1)" }}>
+          <label htmlFor="openai-endpoint" style={{ fontSize: "var(--dt-text-xs)", color: "var(--dt-text-secondary)", display: "block", marginBottom: "var(--dt-space-1)" }}>
             Endpoint URL
           </label>
           <input
+            id="openai-endpoint"
+            name="openai-endpoint"
             type="text"
             value={endpoint}
             onChange={(e) => setEndpoint(e.target.value)}
+            onBlur={commitCredentials}
             placeholder="https://api.openai.com/v1"
             spellCheck={false}
+            autoComplete="off"
+            autoCorrect="off"
+            autoCapitalize="none"
+            inputMode="url"
             style={{
               width: "100%",
               boxSizing: "border-box",
-              minHeight: "42px",
+              minHeight: isMobile ? "46px" : "42px",
               padding: "var(--dt-space-2) var(--dt-space-3)",
               backgroundColor: "var(--dt-bg-tertiary)",
               border: "1px solid var(--dt-border-primary)",
               borderRadius: "var(--dt-radius-md)",
               color: "var(--dt-text-primary)",
-              fontSize: "var(--dt-text-sm)",
+              fontSize: isMobile ? "16px" : "var(--dt-text-sm)",
               fontFamily: "var(--dt-font-mono)",
               outline: "none",
             }}
           />
         </div>
         <div style={{ flex: isMobile ? "1 1 100%" : 1, minWidth: isMobile ? "100%" : "220px" }}>
-          <label style={{ fontSize: "var(--dt-text-xs)", color: "var(--dt-text-secondary)", display: "block", marginBottom: "var(--dt-space-1)" }}>
+          <label htmlFor="openai-api-key" style={{ fontSize: "var(--dt-text-xs)", color: "var(--dt-text-secondary)", display: "block", marginBottom: "var(--dt-space-1)" }}>
             API Key
           </label>
           <input
+            id="openai-api-key"
+            name="openai-api-key"
             type="password"
             value={token}
             onChange={(e) => setToken(e.target.value)}
+            onBlur={commitCredentials}
             placeholder="sk-..."
             spellCheck={false}
+            autoComplete="off"
+            autoCorrect="off"
+            autoCapitalize="none"
             style={{
               width: "100%",
               boxSizing: "border-box",
-              minHeight: "42px",
+              minHeight: isMobile ? "46px" : "42px",
               padding: "var(--dt-space-2) var(--dt-space-3)",
               backgroundColor: "var(--dt-bg-tertiary)",
               border: "1px solid var(--dt-border-primary)",
               borderRadius: "var(--dt-radius-md)",
               color: "var(--dt-text-primary)",
-              fontSize: "var(--dt-text-sm)",
+              fontSize: isMobile ? "16px" : "var(--dt-text-sm)",
               fontFamily: "var(--dt-font-mono)",
               outline: "none",
             }}
           />
         </div>
-        <div style={{ display: "flex", gap: "var(--dt-space-2)", alignSelf: "flex-end", flexWrap: "wrap" }}>
+        <div style={{ display: "flex", gap: "var(--dt-space-2)", alignSelf: isMobile ? "stretch" : "flex-end", flexWrap: "wrap", flex: isMobile ? "1 1 100%" : undefined }}>
           <button
             type="button"
             onClick={() => setShowEndpointHeaders((prev) => !prev)}
             title="Configure custom headers sent with all requests to this endpoint"
             aria-label="Toggle endpoint headers"
+            aria-expanded={showEndpointHeaders}
             style={{
-              minHeight: "42px",
+              minHeight: isMobile ? "46px" : "42px",
               padding: "var(--dt-space-2) var(--dt-space-3)",
               backgroundColor: showEndpointHeaders || activeEndpointHeadersCount > 0 ? "rgba(99, 102, 241, 0.12)" : "var(--dt-bg-tertiary)",
               color: showEndpointHeaders || activeEndpointHeadersCount > 0 ? "var(--dt-accent-primary)" : "var(--dt-text-secondary)",
@@ -1166,6 +1680,7 @@ function OpenAIPlayground() {
               cursor: "pointer",
               display: "inline-flex",
               alignItems: "center",
+              justifyContent: "center",
               gap: "var(--dt-space-2)",
             }}
           >
@@ -1189,27 +1704,28 @@ function OpenAIPlayground() {
           </button>
           <button
             type="button"
-            onClick={connect}
-            disabled={status === "connecting"}
+            onClick={status === "connecting" ? cancelConnect : connect}
+            title={status === "connecting" ? "Cancel this connection attempt" : "Connect to this endpoint"}
             style={{
-              minHeight: "42px",
+              flex: isMobile ? "1 1 auto" : undefined,
+              minHeight: isMobile ? "46px" : "42px",
               padding: "var(--dt-space-2) var(--dt-space-5)",
-              backgroundColor: "var(--dt-accent-primary)",
-              color: "white",
-              border: "none",
+              backgroundColor: status === "connecting" ? "var(--dt-bg-elevated)" : "var(--dt-accent-primary)",
+              color: status === "connecting" ? "var(--dt-text-primary)" : "white",
+              border: status === "connecting" ? "1px solid var(--dt-border-secondary)" : "none",
               borderRadius: "var(--dt-radius-md)",
               fontSize: "var(--dt-text-sm)",
               fontWeight: "var(--dt-font-semibold)",
-              cursor: status === "connecting" ? "not-allowed" : "pointer",
+              cursor: "pointer",
               display: "flex",
               alignItems: "center",
+              justifyContent: "center",
               gap: "var(--dt-space-2)",
-              opacity: status === "connecting" ? 0.6 : 1,
             }}
           >
             {status === "connecting" ? (
               <>
-                <Loader2 size={16} style={{ animation: "spin 1s linear infinite" }} /> Connecting
+                <X size={16} /> Cancel
               </>
             ) : (
               <>
@@ -1250,7 +1766,7 @@ function OpenAIPlayground() {
           display: "flex",
           alignItems: "center",
           justifyContent: "space-between",
-          padding: "var(--dt-space-4) var(--dt-space-5)",
+          padding: isMobile ? "var(--dt-space-3)" : "var(--dt-space-4) var(--dt-space-5)",
           borderBottom: "1px solid var(--dt-border-primary)",
         }}
       >
@@ -1269,8 +1785,8 @@ function OpenAIPlayground() {
             title="Refresh models"
             aria-label="Refresh models"
             style={{
-              width: "32px",
-              height: "32px",
+              width: isMobile ? "44px" : "32px",
+              height: isMobile ? "44px" : "32px",
               display: "inline-flex",
               alignItems: "center",
               justifyContent: "center",
@@ -1385,20 +1901,38 @@ function OpenAIPlayground() {
               display: "inline-flex",
               alignItems: "center",
               gap: "var(--dt-space-1)",
-              padding: "var(--dt-space-1) var(--dt-space-2)",
+              padding: "var(--dt-space-1) var(--dt-space-1) var(--dt-space-1) var(--dt-space-3)",
+              minHeight: isMobile ? "44px" : "30px",
               backgroundColor: active ? "var(--dt-accent-primary)" : "var(--dt-bg-tertiary)",
               color: active ? "white" : "var(--dt-text-secondary)",
               border: "1px solid " + (active ? "var(--dt-accent-primary)" : "var(--dt-border-primary)"),
               borderRadius: "var(--dt-radius-full)",
               fontSize: "var(--dt-text-xs)",
-              cursor: "pointer",
-              transition: "all var(--dt-transition-fast)",
-              maxWidth: "220px",
+              maxWidth: isMobile ? "100%" : "220px",
             }}
           >
-            <span onClick={() => loadChat(chat.id)} style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            <button
+              type="button"
+              onClick={() => loadChat(chat.id)}
+              title={chat.title}
+              style={{
+                background: "transparent",
+                border: "none",
+                padding: "var(--dt-space-1) 0",
+                color: "inherit",
+                font: "inherit",
+                cursor: "pointer",
+                display: "flex",
+                alignItems: "center",
+                alignSelf: "stretch",
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+                minWidth: 0,
+              }}
+            >
               {chat.title}
-            </span>
+            </button>
             <button
               type="button"
               onClick={() => deleteChat(chat.id)}
@@ -1410,10 +1944,15 @@ function OpenAIPlayground() {
                 color: active ? "rgba(255,255,255,0.85)" : "var(--dt-text-tertiary)",
                 cursor: "pointer",
                 display: "inline-flex",
+                alignItems: "center",
+                justifyContent: "center",
+                minWidth: isMobile ? "44px" : "20px",
+                minHeight: isMobile ? "44px" : "20px",
                 padding: 0,
+                borderRadius: "var(--dt-radius-full)",
               }}
             >
-              <Trash2 size={11} />
+              <Trash2 size={12} />
             </button>
           </span>
         );
@@ -1439,13 +1978,13 @@ function OpenAIPlayground() {
           alignItems: "center",
           gap: "var(--dt-space-3)",
           flexWrap: "wrap",
-          padding: "var(--dt-space-3) var(--dt-space-5)",
+          padding: isMobile ? "var(--dt-space-3)" : "var(--dt-space-3) var(--dt-space-5)",
           borderBottom: "1px solid var(--dt-border-primary)",
         }}
       >
-        <div style={{ display: "flex", alignItems: "center", gap: "var(--dt-space-2)", flex: 1, minWidth: 0 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: "var(--dt-space-2)", flex: isMobile ? "1 1 100%" : 1, minWidth: 0 }}>
           <MessageSquare size={16} color="var(--dt-accent-primary)" />
-          <span style={{ fontSize: "var(--dt-text-sm)", fontWeight: "var(--dt-font-semibold)", color: "var(--dt-text-primary)" }}>
+          <span style={{ fontSize: "var(--dt-text-sm)", fontWeight: "var(--dt-font-semibold)", color: "var(--dt-text-primary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
             {activeChat ? (activeChat.title === "New chat" ? "New Chat" : activeChat.title) : "Chat"}
           </span>
           {selectedModel && (
@@ -1461,7 +2000,7 @@ function OpenAIPlayground() {
                 overflow: "hidden",
                 textOverflow: "ellipsis",
                 whiteSpace: "nowrap",
-                maxWidth: "260px",
+                maxWidth: isMobile ? "55vw" : "260px",
               }}
             >
               {selectedModel}
@@ -1469,7 +2008,7 @@ function OpenAIPlayground() {
           )}
         </div>
 
-        <div style={{ display: "flex", alignItems: "center", gap: "var(--dt-space-2)" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: "var(--dt-space-2)", flexWrap: "wrap", flex: isMobile ? "1 1 100%" : undefined }}>
           <div style={{ display: "flex", alignItems: "center", gap: "var(--dt-space-2)" }}>
             <span style={{ fontSize: "var(--dt-text-xs)", color: "var(--dt-text-tertiary)" }}>Temp</span>
             <input
@@ -1480,7 +2019,8 @@ function OpenAIPlayground() {
               value={temperature}
               onChange={(e) => setTemperature(parseFloat(e.target.value))}
               title={`Temperature: ${temperature.toFixed(1)}`}
-              style={{ width: "90px", accentColor: "var(--dt-accent-primary)" }}
+              aria-label="Temperature"
+              style={{ flex: isMobile ? "1 1 auto" : undefined, width: isMobile ? undefined : "90px", minWidth: "80px", accentColor: "var(--dt-accent-primary)" }}
             />
             <span style={{ fontSize: "var(--dt-text-xs)", color: "var(--dt-text-secondary)", width: 26 }}>{temperature.toFixed(1)}</span>
           </div>
@@ -1491,11 +2031,12 @@ function OpenAIPlayground() {
             disabled={!selectedModel}
             title={selectedModel ? `Configure custom headers specifically for ${selectedModel}` : "Select a model first"}
             aria-label="Model custom headers"
+            aria-expanded={showModelHeaders}
             style={{
               display: "inline-flex",
               alignItems: "center",
               gap: "var(--dt-space-1)",
-              minHeight: "34px",
+              minHeight: isMobile ? "44px" : "34px",
               padding: "0 var(--dt-space-2)",
               backgroundColor: showModelHeaders || activeModelHeadersCount > 0 ? "rgba(99, 102, 241, 0.15)" : "var(--dt-bg-tertiary)",
               border: "1px solid " + (showModelHeaders || activeModelHeadersCount > 0 ? "var(--dt-accent-primary)" : "var(--dt-border-primary)"),
@@ -1529,14 +2070,20 @@ function OpenAIPlayground() {
           <button
             type="button"
             onClick={isBenchmarking ? stopBenchmark : runBenchmark}
-            disabled={!selectedModel || isStreaming}
-            title={isBenchmarking ? "Stop benchmark" : "Benchmark output TPS"}
+            disabled={!selectedModel || !connectedEndpoint || isStreaming}
+            title={
+              isBenchmarking
+                ? "Stop benchmark"
+                : connectedEndpoint
+                  ? "Benchmark output TPS"
+                  : "Connect to an endpoint first"
+            }
             aria-label={isBenchmarking ? "Stop benchmark" : "Benchmark output TPS"}
             style={{
               display: "inline-flex",
               alignItems: "center",
               gap: "var(--dt-space-1)",
-              minHeight: "34px",
+              minHeight: isMobile ? "44px" : "34px",
               padding: "0 var(--dt-space-2)",
               backgroundColor: isBenchmarking ? "rgba(239, 68, 68, 0.15)" : "rgba(16, 185, 129, 0.15)",
               border: "1px solid " + (isBenchmarking ? "var(--dt-accent-error)" : "var(--dt-accent-success)"),
@@ -1544,8 +2091,8 @@ function OpenAIPlayground() {
               color: isBenchmarking ? "var(--dt-accent-error)" : "var(--dt-accent-success)",
               fontSize: "var(--dt-text-xs)",
               fontWeight: "var(--dt-font-medium)",
-              cursor: selectedModel && !isStreaming ? "pointer" : "not-allowed",
-              opacity: selectedModel && !isStreaming ? 1 : 0.5,
+              cursor: selectedModel && connectedEndpoint && !isStreaming ? "pointer" : "not-allowed",
+              opacity: selectedModel && connectedEndpoint && !isStreaming ? 1 : 0.5,
             }}
           >
             {isBenchmarking ? (
@@ -1566,8 +2113,8 @@ function OpenAIPlayground() {
             title="New chat"
             aria-label="New chat"
             style={{
-              minWidth: "34px",
-              height: "34px",
+              minWidth: isMobile ? "44px" : "34px",
+              height: isMobile ? "44px" : "34px",
               display: "inline-flex",
               alignItems: "center",
               justifyContent: "center",
@@ -1585,11 +2132,11 @@ function OpenAIPlayground() {
             type="button"
             onClick={saveCurrentChat}
             disabled={!activeChat}
-            title="Save chat to cookies"
+            title="Save chat to this browser"
             aria-label="Save chat"
             style={{
-              minWidth: "34px",
-              height: "34px",
+              minWidth: isMobile ? "44px" : "34px",
+              height: isMobile ? "44px" : "34px",
               display: "inline-flex",
               alignItems: "center",
               justifyContent: "center",
@@ -1606,7 +2153,7 @@ function OpenAIPlayground() {
         </div>
       </div>
 
-      <div style={{ padding: "var(--dt-space-4) var(--dt-space-5) 0" }}>
+      <div style={{ padding: isMobile ? "var(--dt-space-3) var(--dt-space-3) 0" : "var(--dt-space-4) var(--dt-space-5) 0" }}>
         {showModelHeaders && selectedModel && (
           <div style={{ marginBottom: "var(--dt-space-3)" }}>
             <HeadersEditor
@@ -1646,10 +2193,12 @@ function OpenAIPlayground() {
         <>
           <div
             ref={messagesContainerRef}
+            className="dt-scroll"
             style={{
               flex: 1,
               overflowY: "auto",
-              padding: "var(--dt-space-4) var(--dt-space-5)",
+              WebkitOverflowScrolling: "touch",
+              padding: isMobile ? "var(--dt-space-3)" : "var(--dt-space-4) var(--dt-space-5)",
               display: "flex",
               flexDirection: "column",
               gap: "var(--dt-space-4)",
@@ -1700,7 +2249,7 @@ function OpenAIPlayground() {
                           display: "inline-flex",
                           alignItems: "center",
                           gap: "var(--dt-space-1)",
-                          minHeight: "32px",
+                          minHeight: isMobile ? "44px" : "32px",
                           padding: "0 var(--dt-space-3)",
                           backgroundColor: "rgba(239, 68, 68, 0.15)",
                           border: "1px solid var(--dt-accent-error)",
@@ -1724,7 +2273,7 @@ function OpenAIPlayground() {
                             display: "inline-flex",
                             alignItems: "center",
                             gap: "var(--dt-space-1)",
-                            minHeight: "32px",
+                            minHeight: isMobile ? "44px" : "32px",
                             padding: "0 var(--dt-space-3)",
                             backgroundColor: "rgba(16, 185, 129, 0.15)",
                             border: "1px solid var(--dt-accent-success)",
@@ -1745,7 +2294,7 @@ function OpenAIPlayground() {
                 <div style={{ display: "flex", justifyContent: "flex-end", gap: "var(--dt-space-2)" }}>
                   <div
                     style={{
-                      maxWidth: "82%",
+                      maxWidth: isMobile ? "92%" : "82%",
                       padding: "var(--dt-space-3) var(--dt-space-4)",
                       backgroundColor: "rgba(99, 102, 241, 0.15)",
                       border: "1px solid rgba(99, 102, 241, 0.4)",
@@ -1866,7 +2415,7 @@ function OpenAIPlayground() {
                 <div key={index} style={{ display: "flex", justifyContent: "flex-end", gap: "var(--dt-space-2)" }}>
                   <div
                     style={{
-                      maxWidth: "82%",
+                      maxWidth: isMobile ? "92%" : "82%",
                       padding: "var(--dt-space-3) var(--dt-space-4)",
                       backgroundColor: "rgba(99, 102, 241, 0.15)",
                       border: "1px solid rgba(99, 102, 241, 0.4)",
@@ -1971,6 +2520,7 @@ function OpenAIPlayground() {
             {error && (
               <div
                 role="alert"
+                className="dt-alert"
                 style={{
                   padding: "var(--dt-space-3) var(--dt-space-4)",
                   backgroundColor: "rgba(239, 68, 68, 0.1)",
@@ -1989,25 +2539,10 @@ function OpenAIPlayground() {
 
           <div
             style={{
-              padding: "var(--dt-space-4) var(--dt-space-5)",
+              padding: isMobile ? "var(--dt-space-3)" : "var(--dt-space-4) var(--dt-space-5)",
               borderTop: "1px solid var(--dt-border-primary)",
             }}
           >
-            {notice && (
-              <div
-                style={{
-                  padding: "var(--dt-space-2) var(--dt-space-3)",
-                  marginBottom: "var(--dt-space-3)",
-                  backgroundColor: "rgba(59, 130, 246, 0.1)",
-                  border: "1px solid var(--dt-accent-info)",
-                  color: "var(--dt-accent-info)",
-                  borderRadius: "var(--dt-radius-md)",
-                  fontSize: "var(--dt-text-xs)",
-                }}
-              >
-                {notice}
-              </div>
-            )}
             <div
               style={{
                 display: "flex",
@@ -2019,47 +2554,86 @@ function OpenAIPlayground() {
                 padding: "var(--dt-space-2)",
               }}
             >
+              {!connectedEndpoint && (
+                <div style={{ padding: "var(--dt-space-1) var(--dt-space-2) 0", fontSize: "var(--dt-text-xs)", color: "var(--dt-text-tertiary)" }}>
+                  Not connected — press Connect above to enable sending.
+                </div>
+              )}
               {attachments.length > 0 && (
-                <div style={{ display: "flex", gap: "var(--dt-space-2)", flexWrap: "wrap" }}>
+                <div style={{ display: "flex", gap: isMobile ? "var(--dt-space-4)" : "var(--dt-space-2)", flexWrap: "wrap" }}>
                   {attachments.map((attachment) => (
-                    <div key={attachment.id} style={{ position: "relative" }}>
+                    <div
+                      key={attachment.id}
+                      style={{
+                        position: "relative",
+                        display: "flex",
+                        flexDirection: "column",
+                        gap: isMobile ? "var(--dt-space-1)" : 0,
+                      }}
+                    >
                       <img
                         src={attachment.dataUrl}
                         alt={attachment.name}
                         title={attachment.name}
                         style={{
-                          width: "48px",
-                          height: "48px",
+                          width: isMobile ? "64px" : "48px",
+                          height: isMobile ? "64px" : "48px",
                           borderRadius: "var(--dt-radius-md)",
                           objectFit: "cover",
                           border: "1px solid var(--dt-border-primary)",
                           display: "block",
                         }}
                       />
-                      <button
-                        type="button"
-                        onClick={() => removeAttachment(attachment.id)}
-                        title={`Remove ${attachment.name}`}
-                        aria-label={`Remove ${attachment.name}`}
-                        style={{
-                          position: "absolute",
-                          top: -6,
-                          right: -6,
-                          width: "20px",
-                          height: "20px",
-                          display: "inline-flex",
-                          alignItems: "center",
-                          justifyContent: "center",
-                          backgroundColor: "var(--dt-bg-elevated)",
-                          border: "1px solid var(--dt-border-primary)",
-                          borderRadius: "50%",
-                          color: "var(--dt-text-secondary)",
-                          cursor: "pointer",
-                          padding: 0,
-                        }}
-                      >
-                        <X size={12} />
-                      </button>
+                      {isMobile ? (
+                        // A full-width control below the thumbnail keeps a proper
+                        // 44px tap target without covering the image.
+                        <button
+                          type="button"
+                          onClick={() => removeAttachment(attachment.id)}
+                          title={`Remove ${attachment.name}`}
+                          aria-label={`Remove ${attachment.name}`}
+                          style={{
+                            minHeight: "44px",
+                            display: "inline-flex",
+                            alignItems: "center",
+                            justifyContent: "center",
+                            gap: "var(--dt-space-1)",
+                            backgroundColor: "var(--dt-bg-elevated)",
+                            border: "1px solid var(--dt-border-primary)",
+                            borderRadius: "var(--dt-radius-md)",
+                            color: "var(--dt-text-secondary)",
+                            cursor: "pointer",
+                            fontSize: "var(--dt-text-xs)",
+                          }}
+                        >
+                          <X size={14} /> Remove
+                        </button>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => removeAttachment(attachment.id)}
+                          title={`Remove ${attachment.name}`}
+                          aria-label={`Remove ${attachment.name}`}
+                          style={{
+                            position: "absolute",
+                            top: -6,
+                            right: -6,
+                            width: "20px",
+                            height: "20px",
+                            display: "inline-flex",
+                            alignItems: "center",
+                            justifyContent: "center",
+                            backgroundColor: "var(--dt-bg-elevated)",
+                            border: "1px solid var(--dt-border-primary)",
+                            borderRadius: "50%",
+                            color: "var(--dt-text-secondary)",
+                            cursor: "pointer",
+                            padding: 0,
+                          }}
+                        >
+                          <X size={12} />
+                        </button>
+                      )}
                     </div>
                   ))}
                 </div>
@@ -2108,9 +2682,20 @@ function OpenAIPlayground() {
                       sendMessage();
                     }
                   }}
+                  onFocus={() => {
+                    revealComposer();
+                  }}
+                  onBlur={() => {
+                    cancelComposerReveal();
+                  }}
                   placeholder={
-                    selectedModel ? "Type a message... (Enter to send, Shift+Enter for newline)" : "Select a model to begin chatting."
+                    selectedModel
+                      ? isMobile
+                        ? "Type a message…"
+                        : "Type a message... (Enter to send, Shift+Enter for newline)"
+                      : "Select a model to begin chatting."
                   }
+                  aria-label="Message"
                   rows={2}
                   disabled={!selectedModel}
                 style={{
@@ -2123,7 +2708,7 @@ function OpenAIPlayground() {
                   border: "none",
                   outline: "none",
                   color: "var(--dt-text-primary)",
-                  fontSize: "var(--dt-text-sm)",
+                  fontSize: isMobile ? "16px" : "var(--dt-text-sm)",
                   fontFamily: "var(--dt-font-sans)",
                   lineHeight: "var(--dt-leading-normal)",
                 }}
@@ -2153,8 +2738,8 @@ function OpenAIPlayground() {
                 <button
                   type="button"
                   onClick={sendMessage}
-                  disabled={!selectedModel || (!input.trim() && attachments.length === 0) || !activeChat}
-                  title="Send"
+                  disabled={!selectedModel || !connectedEndpoint || (!input.trim() && attachments.length === 0) || !activeChat}
+                  title={connectedEndpoint ? "Send" : "Connect to an endpoint first"}
                   aria-label="Send"
                   style={{
                     minWidth: "44px",
@@ -2167,7 +2752,10 @@ function OpenAIPlayground() {
                     border: "none",
                     borderRadius: "var(--dt-radius-md)",
                     cursor: "pointer",
-                    opacity: !selectedModel || (!input.trim() && attachments.length === 0) || !activeChat ? 0.5 : 1,
+                    opacity:
+                      !selectedModel || !connectedEndpoint || (!input.trim() && attachments.length === 0) || !activeChat
+                        ? 0.5
+                        : 1,
                   }}
                 >
                   <Send size={16} />
@@ -2181,10 +2769,12 @@ function OpenAIPlayground() {
     </div>
   );
 
+  const showConnectionEditor = !isMobile || connectionExpanded || status !== "connected";
+
   const workspace = isMobile ? (
     <div style={{ display: "flex", flexDirection: "column", gap: "var(--dt-space-4)" }}>
-      <div style={{ height: "300px", display: "flex", flexShrink: 0 }}>{modelsPanel}</div>
-      <div style={{ height: "min(72dvh, 640px)", display: "flex", flexShrink: 0 }}>{chatPanel}</div>
+      <div style={{ height: "min(340px, 40vh)", minHeight: "200px", display: "flex", flexShrink: 0 }}>{modelsPanel}</div>
+      <div ref={chatPanelRef} style={{ height: "min(620px, 66vh)", display: "flex", flexShrink: 0, scrollMarginTop: "var(--dt-space-3)" }}>{chatPanel}</div>
     </div>
   ) : (
     <div
@@ -2202,10 +2792,13 @@ function OpenAIPlayground() {
     </div>
   );
 
+  const headerGap = isMobile ? "var(--dt-space-3)" : "var(--dt-space-5)";
+
   return (
     <div
+      className="dt-ai-root"
       style={{
-        padding: "var(--dt-space-6)",
+        padding: isMobile ? "var(--dt-space-3)" : "var(--dt-space-6)",
         height: isMobile ? "auto" : availableHeight ? `${availableHeight}px` : "calc(100dvh - 64px)",
         minHeight: 0,
         boxSizing: "border-box",
@@ -2214,7 +2807,7 @@ function OpenAIPlayground() {
         overflowY: "auto",
       }}
     >
-      <div style={{ marginBottom: "var(--dt-space-5)", flexShrink: 0 }}>
+      <div style={{ marginBottom: isMobile ? "var(--dt-space-3)" : "var(--dt-space-5)", flexShrink: 0 }}>
         <Link
           to="/"
           style={{
@@ -2224,6 +2817,7 @@ function OpenAIPlayground() {
             color: "var(--dt-text-tertiary)",
             textDecoration: "none",
             fontSize: "var(--dt-text-sm)",
+            minHeight: isMobile ? "44px" : "28px",
           }}
         >
           <ArrowLeft size={16} /> Back to Home
@@ -2236,16 +2830,16 @@ function OpenAIPlayground() {
           alignItems: "center",
           gap: "var(--dt-space-3)",
           flexWrap: "wrap",
-          marginBottom: "var(--dt-space-5)",
+          marginBottom: headerGap,
           flexShrink: 0,
         }}
       >
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <h1 style={{ margin: "0 0 var(--dt-space-1) 0", fontSize: "var(--dt-text-3xl)", fontWeight: "var(--dt-font-bold)", color: "var(--dt-text-primary)" }}>
+        <div style={{ flex: "1 1 auto", minWidth: 0 }}>
+          <h1 style={{ margin: "0 0 var(--dt-space-1) 0", fontSize: isMobile ? "var(--dt-text-2xl)" : "var(--dt-text-3xl)", fontWeight: "var(--dt-font-bold)", color: "var(--dt-text-primary)" }}>
             OpenAI Playground
           </h1>
           <p style={{ margin: 0, fontSize: "var(--dt-text-sm)", color: "var(--dt-text-secondary)" }}>
-            Connect to any OpenAI-compatible endpoint, browse its models, and chat with streaming responses. The API key is kept in session storage for this tab.
+            Connect to any OpenAI-compatible endpoint, browse its models, and chat with streaming responses. Credentials are saved in this browser and stay until you remove them.
           </p>
         </div>
         <div
@@ -2257,10 +2851,13 @@ function OpenAIPlayground() {
             backgroundColor: "var(--dt-bg-secondary)",
             border: "1px solid var(--dt-border-primary)",
             borderRadius: "var(--dt-radius-full)",
+            maxWidth: "100%",
+            minWidth: 0,
+            flexShrink: 0,
           }}
         >
-          <span style={{ width: "8px", height: "8px", borderRadius: "50%", backgroundColor: statusColor }} />
-          <span style={{ fontSize: "var(--dt-text-xs)", color: "var(--dt-text-secondary)", maxWidth: "260px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          <span style={{ width: "8px", height: "8px", borderRadius: "50%", backgroundColor: statusColor, flexShrink: 0 }} />
+          <span style={{ fontSize: "var(--dt-text-xs)", color: "var(--dt-text-secondary)", maxWidth: isMobile ? "70vw" : "260px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
             {status === "connected"
               ? `Connected · ${connectedEndpoint}`
               : status === "error"
@@ -2272,17 +2869,65 @@ function OpenAIPlayground() {
         </div>
       </div>
 
+      {notice && (
+        <div
+          role="status"
+          style={{
+            padding: "var(--dt-space-2) var(--dt-space-3)",
+            marginBottom: headerGap,
+            backgroundColor: "rgba(59, 130, 246, 0.1)",
+            border: "1px solid var(--dt-accent-info)",
+            color: "var(--dt-accent-info)",
+            borderRadius: "var(--dt-radius-md)",
+            fontSize: "var(--dt-text-xs)",
+            flexShrink: 0,
+          }}
+        >
+          {notice}
+        </div>
+      )}
+
+      {(credentialError || chatError) && (
+        <div
+          role="alert"
+          style={{
+            display: "flex",
+            flexDirection: "column",
+            gap: "var(--dt-space-2)",
+            marginBottom: headerGap,
+            flexShrink: 0,
+          }}
+        >
+          {[credentialError, chatError].filter(Boolean).map((message) => (
+            <div
+              key={message}
+              className="dt-alert"
+              style={{
+                padding: "var(--dt-space-2) var(--dt-space-3)",
+                backgroundColor: "rgba(239, 68, 68, 0.1)",
+                border: "1px solid var(--dt-accent-error)",
+                color: "var(--dt-accent-error)",
+                borderRadius: "var(--dt-radius-md)",
+                fontSize: "var(--dt-text-xs)",
+              }}
+            >
+              {message}
+            </div>
+          ))}
+        </div>
+      )}
+
       <div
         style={{
           backgroundColor: "var(--dt-bg-secondary)",
           border: "1px solid var(--dt-border-primary)",
           borderRadius: "var(--dt-radius-lg)",
-          padding: "var(--dt-space-4) var(--dt-space-5)",
-          marginBottom: "var(--dt-space-5)",
+          padding: isMobile ? "var(--dt-space-4)" : "var(--dt-space-4) var(--dt-space-5)",
+          marginBottom: headerGap,
           flexShrink: 0,
         }}
       >
-        <div style={{ display: "flex", alignItems: "center", gap: "var(--dt-space-2)", marginBottom: "var(--dt-space-3)" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: "var(--dt-space-2)", flexWrap: "wrap", marginBottom: showConnectionEditor ? "var(--dt-space-3)" : 0 }}>
           <Shield size={14} color="var(--dt-accent-primary)" />
           <span style={{ fontSize: "var(--dt-text-sm)", fontWeight: "var(--dt-font-semibold)", color: "var(--dt-text-primary)" }}>
             Connection
@@ -2290,8 +2935,114 @@ function OpenAIPlayground() {
           {status === "error" && (
             <span style={{ fontSize: "var(--dt-text-xs)", color: "var(--dt-accent-error)" }}>{statusMessage}</span>
           )}
+
+          <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: "var(--dt-space-2)", flexWrap: "wrap" }}>
+            {isMobile && status === "connected" && (
+              <button
+                type="button"
+                onClick={() => setConnectionExpanded((prev) => !prev)}
+                aria-expanded={connectionExpanded}
+                title={connectionExpanded ? "Hide connection settings" : "Edit connection settings"}
+                style={{
+                  minHeight: isMobile ? "44px" : "36px",
+                  padding: "0 var(--dt-space-3)",
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: "var(--dt-space-1)",
+                  backgroundColor: "var(--dt-bg-tertiary)",
+                  border: "1px solid var(--dt-border-primary)",
+                  borderRadius: "var(--dt-radius-md)",
+                  color: "var(--dt-text-secondary)",
+                  fontSize: "var(--dt-text-xs)",
+                  fontWeight: "var(--dt-font-medium)",
+                  cursor: "pointer",
+                }}
+              >
+                <SlidersHorizontal size={13} />
+                {connectionExpanded ? "Hide" : "Edit"}
+                {connectionExpanded ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+              </button>
+            )}
+
+            {canRemoveCredentials && !confirmRemove && (
+              <button
+                type="button"
+                onClick={() => setConfirmRemove(true)}
+                title="Remove the saved endpoint, API key, and custom headers from this browser"
+                style={{
+                  minHeight: isMobile ? "44px" : "36px",
+                  padding: "0 var(--dt-space-3)",
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: "var(--dt-space-1)",
+                  backgroundColor: "rgba(239, 68, 68, 0.1)",
+                  border: "1px solid var(--dt-accent-error)",
+                  borderRadius: "var(--dt-radius-md)",
+                  color: "var(--dt-accent-error)",
+                  fontSize: "var(--dt-text-xs)",
+                  fontWeight: "var(--dt-font-medium)",
+                  cursor: "pointer",
+                }}
+              >
+                <Trash2 size={13} /> Remove credentials
+              </button>
+            )}
+
+            {confirmRemove && (
+              <>
+                <span style={{ fontSize: "var(--dt-text-xs)", color: "var(--dt-text-secondary)" }}>Remove saved credentials?</span>
+                <button
+                  type="button"
+                  onClick={removeCredentials}
+                  style={{
+                    minHeight: isMobile ? "44px" : "36px",
+                    padding: "0 var(--dt-space-3)",
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: "var(--dt-space-1)",
+                    backgroundColor: "var(--dt-accent-error)",
+                    border: "1px solid var(--dt-accent-error)",
+                    borderRadius: "var(--dt-radius-md)",
+                    color: "white",
+                    fontSize: "var(--dt-text-xs)",
+                    fontWeight: "var(--dt-font-semibold)",
+                    cursor: "pointer",
+                  }}
+                >
+                  <Trash2 size={13} /> Remove
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setConfirmRemove(false)}
+                  style={{
+                    minHeight: isMobile ? "44px" : "36px",
+                    padding: "0 var(--dt-space-3)",
+                    backgroundColor: "var(--dt-bg-tertiary)",
+                    border: "1px solid var(--dt-border-primary)",
+                    borderRadius: "var(--dt-radius-md)",
+                    color: "var(--dt-text-secondary)",
+                    fontSize: "var(--dt-text-xs)",
+                    fontWeight: "var(--dt-font-medium)",
+                    cursor: "pointer",
+                  }}
+                >
+                  Cancel
+                </button>
+              </>
+            )}
+          </div>
         </div>
-        {inputRow}
+
+        {showConnectionEditor ? (
+          inputRow
+        ) : (
+          <div style={{ display: "flex", alignItems: "center", gap: "var(--dt-space-2)", flexWrap: "wrap" }}>
+            <span style={{ fontFamily: "var(--dt-font-mono)", fontSize: "var(--dt-text-xs)", color: "var(--dt-text-secondary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: "1 1 auto", minWidth: 0 }}>
+              {connectedEndpoint || endpoint}
+            </span>
+            <span style={{ fontSize: "var(--dt-text-xs)", color: "var(--dt-text-tertiary)", flexShrink: 0 }}>API key saved</span>
+          </div>
+        )}
       </div>
 
       {workspace}
@@ -2352,6 +3103,37 @@ function OpenAIPlayground() {
         }
         .chat-markdown img { max-width: 100%; border-radius: 8px; }
         .chat-markdown hr { border: none; border-top: 1px solid var(--dt-border-primary); margin: 12px 0; }
+
+        /* Keep the long messages scroller from chaining its overscroll to the page. */
+        .dt-scroll { overscroll-behavior: contain; -webkit-overflow-scrolling: touch; }
+        .dt-hdr-row { row-gap: var(--dt-space-2); }
+        /* Error text uses a lighter red so it clears WCAG AA on dark surfaces. */
+        .dt-ai-root .dt-alert { color: #fca5a5; }
+
+        /* Visible keyboard focus for every control on this screen, replacing the
+           inline outline:none used by the credential and header inputs. */
+        .dt-ai-root input:focus-visible,
+        .dt-ai-root textarea:focus-visible,
+        .dt-ai-root select:focus-visible,
+        .dt-ai-root button:focus-visible {
+          outline: 2px solid var(--dt-accent-primary) !important;
+          outline-offset: 2px;
+        }
+
+        @media (max-width: 767px) {
+          /* 16px stops mobile Safari from zooming the viewport when a field is
+             focused; 44px keeps the header editor comfortable to tap. */
+          .dt-hdr-input { font-size: 16px !important; min-height: 44px !important; }
+          .dt-hdr-btn { min-height: 44px !important; min-width: 44px !important; padding: 0 var(--dt-space-2) !important; }
+          .dt-hdr-check { width: 24px; height: 24px; }
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+          .stream-dot { animation: none !important; }
+          /* Loader spinners are declared inline; neutralise them here. */
+          .dt-ai-root [style*="animation"] { animation: none !important; }
+          .dt-ai-root { scroll-behavior: auto !important; }
+        }
       `}</style>
     </div>
   );
@@ -2361,7 +3143,7 @@ registerDevTool({
   author: "System",
   categoryId: ToolCategories.AI,
   description:
-    "Connect to any OpenAI-compatible endpoint, browse available models, and chat with streaming responses. The API key is kept in session storage; chats are stored in browser cookies.",
+    "Connect to any OpenAI-compatible endpoint, browse available models, and chat with streaming responses. Credentials and saved chats stay in this browser until you remove them.",
   id: "openai-playground-tool",
   name: "OpenAI Playground",
   tool: OpenAIPlayground,
