@@ -134,6 +134,7 @@ export function BaseTool({
         clearLogs={clearLogs}
         progress={progress}
         error={error}
+        schema={toolMeta.schema}
       />
     </div>
   );

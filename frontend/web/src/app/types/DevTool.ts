@@ -1,3 +1,4 @@
+import { z } from "zod";
 import type { ComponentType } from "react";
 
 export type DevTool={
@@ -10,5 +11,6 @@ export type DevTool={
     aliases?: string[],
     keywords?: string[],
     supportsRealtime?: boolean,
-    shortcuts?: string[]
+    shortcuts?: string[],
+    schema?: z.ZodType<any, any, any>;
 }

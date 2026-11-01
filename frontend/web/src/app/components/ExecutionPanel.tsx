@@ -4,6 +4,7 @@ import { TerminalOutput, type LogEntry } from "./TerminalOutput";
 import type { DevToolOutput } from "../types/DevToolOutput";
 import { OutputCard } from "./OutputCard";
 import { useIsMobile } from "./ui/use-mobile";
+import { z } from "zod";
 
 interface FormField {
   name: string;
@@ -38,6 +39,7 @@ interface ExecutionPanelProps {
   isRealtime?: boolean;
   progress?: number;
   error?: string;
+  schema?: z.ZodType<any, any, any>;
 }
 
 interface FileItem {
@@ -58,13 +60,14 @@ const inputStyle: CSSProperties = {
   minHeight: "42px",
 };
 
-export function ExecutionPanel({ executeButtonVisible = true, isRemoteAvailable, isExecuting, logs, fields, onExecute, output, clearLogs, isRealtime, progress, error }: ExecutionPanelProps) {
+export function ExecutionPanel({ executeButtonVisible = true, isRemoteAvailable, isExecuting, logs, fields, onExecute, output, clearLogs, isRealtime, progress, error, schema }: ExecutionPanelProps) {
   const isMobile = useIsMobile();
   const [formData, setFormData] = useState<Record<string, any>>({});
   const [executionMode, setExecutionMode] = useState<"local" | "remote">("local");
   const [fileState, setFileState] = useState<Record<string, FileItem[]>>({});
   const [dragField, setDragField] = useState<string | null>(null);
 
+  const [validationError, setValidationError] = useState<string | null>(null);
   const formDataRef = useRef(formData);
   const objectUrlsRef = useRef<Set<string>>(new Set());
 
@@ -84,6 +87,26 @@ export function ExecutionPanel({ executeButtonVisible = true, isRemoteAvailable,
   };
 
   const handleFieldChange = (name: string, value: any) => applyField(name, value);
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (schema) {
+      try {
+        schema.parse(formDataRef.current);
+        setValidationError(null);
+      } catch (err) {
+        if (err && typeof err === "object" && "issues" in err) {
+          setValidationError((err as z.ZodError).issues.map((e: any) => e.message).join(", "));
+          return;
+        }
+      }
+    } else {
+        setValidationError(null);
+    }
+
+    void Promise.resolve().then(() => onExecute(formDataRef.current)).catch(() => { /* handled by tool */ });
+  };
+
 
   // Keep fileState and the submitted form value derived from one source so they
   // can never disagree after selecting, toggling or removing files.
@@ -117,12 +140,7 @@ export function ExecutionPanel({ executeButtonVisible = true, isRemoteAvailable,
     setFiles(name, [...(fileState[name] || []), ...newFiles]);
   };
 
-  const submit = (e: React.FormEvent) => {
-    e.preventDefault();
-    // Defer into a promise chain so synchronous throws from onExecute are also
-    // captured (tools surface their own error state).
-    void Promise.resolve().then(() => onExecute(formDataRef.current)).catch(() => { /* handled by tool */ });
-  };
+
 
   return (
     <div style={{
@@ -205,7 +223,7 @@ export function ExecutionPanel({ executeButtonVisible = true, isRemoteAvailable,
             </div>}
         </div>
 
-        <form onSubmit={submit} style={{ display: "flex", flexDirection: "column", gap: "var(--dt-space-5)" }}>
+        <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: "var(--dt-space-5)" }}>
           {fields.map((field) => {
             const fieldId = `field-${field.name}`;
             return (
@@ -548,7 +566,25 @@ export function ExecutionPanel({ executeButtonVisible = true, isRemoteAvailable,
             </div>
           );})}
 
-          {error && (
+          {(error || validationError) && (
+            <div role="alert" style={{
+              display: "flex",
+              alignItems: "center",
+              gap: "var(--dt-space-2)",
+              padding: "var(--dt-space-3)",
+              border: "1px solid var(--dt-accent-error)",
+              backgroundColor: "rgba(239, 68, 68, 0.1)",
+              borderRadius: "var(--dt-radius-md)",
+              color: "var(--dt-accent-error)",
+              fontSize: "var(--dt-text-sm)",
+              marginBottom: "var(--dt-space-4)"
+            }}>
+              <AlertTriangle size={16} aria-hidden="true" />
+              <span>{error || validationError}</span>
+            </div>
+          )}
+
+          {false && (
             <div role="alert" style={{
               display: "flex",
               alignItems: "center",
